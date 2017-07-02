@@ -1,0 +1,70 @@
+#!/bin/env perl
+
+use strict;
+use warnings;
+
+use File::Basename;
+use Cwd;
+our $repodir;
+BEGIN { $repodir = dirname(Cwd::realpath("$0/..")) }
+use lib "$repodir/lib";
+use util;
+use release;
+override_warn_and_die();
+
+my $mode;
+for(my $x = 0; $x <= $#ARGV; $x++)
+{
+  my $param = $ARGV[$x];
+  if($param =~ /^stats|rates|mine$/)
+  {
+    $mode = splice(@ARGV, $x, 1);
+    last;
+  }
+}
+
+if(! -r "$ENV{HOME}/.autominer/config")
+{
+  print <<MESSAGE;
+No config file found at $ENV{HOME}/.autominer/config
+
+try:
+  mkdir -p $ENV{HOME}/.autominer
+  cp $repodir/config/example $ENV{HOME}/.autominer/config
+MESSAGE
+  exit;
+}
+
+if($mode)
+{
+  my @cmd = ("$repodir/bin/autominer-$mode", @ARGV);
+  exec { $cmd[0] } @cmd
+}
+
+for my $param (@ARGV)
+{
+  if($param eq "--help" || $param eq "-h")
+  {
+    print <<HELP;
+autominer - an autoswitching miner for linux, version $release::number
+
+ >> BTC donations : 184AtMD3AihYke2bKQD9AXh4Dgzvtr7jhA (hossbeast)
+
+usage: autominer [stats|rates|mine] [options]
+
+ --help                 print this help text
+ --version              print the version number, exit
+
+For more information visit https://github.com/hossbeast/autominer
+HELP
+    exit 0
+  }
+  elsif($param eq "--version" || $param eq "-V")
+  {
+    print "autominer-$release::number\n";
+    exit 0;
+  }
+}
+
+print STDERR "unrecognized arguments @ARGV\n";
+exit 1;

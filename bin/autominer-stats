@@ -1,0 +1,143 @@
+#!/bin/env perl
+
+use strict;
+use warnings;
+
+use File::Basename;
+use Cwd;
+our $repodir;
+BEGIN { $repodir = dirname(Cwd::realpath("$0/..")) }
+use lib "$repodir/lib";
+use util;
+use release;
+override_warn_and_die();
+
+use File::Find;
+use Time::Piece;
+use config;
+
+our $verbose = 0;
+our %opts = (
+    'datadir'       => $ENV{HOME} . "/.autominer/data"
+  , 'sort'          => 'h3'
+  , 'profile'       => 'default'
+);
+my %optargs = (
+    'help|h'        => \$opts{help}
+  , 'version|V'     => \$opts{version}
+  , 'verbose|v'     => \$opts{verbose}
+
+  , 'data-dir=s'    => \$opts{"datadir"}
+  , 'profile=s'     => \$opts{profile}
+  , 'transitions'   => \$opts{transitions}
+);
+configure(\%optargs, \%opts);
+
+if($opts{help})
+{
+  print <<HELP;
+autominer - an autoswitching miner for linux, version $release::number
+
+ >> BTC donations : 184AtMD3AihYke2bKQD9AXh4Dgzvtr7jhA (hossbeast)
+
+usage: autominer stats [options]
+
+ --help               print this help text
+ --version            print the version number, exit
+ --verbose            print commands as they are run
+
+required
+ --data-dir <path>    location for benchark and market data
+
+optional
+ --profile <name>     separate config file and benchmark data
+ --transitions        show only transitions
+HELP
+  exit 0
+}
+if($opts{version})
+{
+  print "autominer-$release::number\n";
+  exit 0;
+}
+
+my $mining_miner = '';
+my $mining_algo = '';
+my $unmatched = 0;
+
+my $history_dir = "$opts{datadir}/history/$opts{profile}";
+my $wanted = sub {
+  return if $_ eq "." or $_ eq "..";
+
+  # determine whether there was a transition
+  readlink($_) =~ /\/([^\/]+)\/([^\/]+)\/[0-9]+$/;
+
+  my $miner = $1;
+  my $algo = $2;
+  my $transition = 0;
+  if($mining_miner ne $miner || $mining_algo ne $algo)
+  {
+    $transition = 1;
+  }
+
+  return if $opts{transitions} and not $transition;
+
+  open(my $fh, "<$history_dir/$_") or die("open($history_dir/$_) : $!");
+  my $header = <$fh>;
+  chomp $header if $header;
+  close($fh);
+
+  if(not $header)
+  {
+    $unmatched++;
+    return;
+  }
+
+  my $v0re = qr/
+    ^
+    v0
+    \s+ ([a-z0-9-_]+)\/([a-z0-9-_]+)
+    \s+ ([a-z0-9]+)
+    \s+ ([0-9.]+)\s+\*
+    \s+ ([0-9.]+)\s+=
+    \s+ ([0-9.]+)
+    $
+  /oxi;
+
+  if($header !~ $v0re)
+  {
+    $unmatched++;
+    return;
+  }
+
+  my $window = $3;
+  my $speed = $4;
+  my $rate = $5;
+  my $profit = $6;
+
+  my $mtime = (stat($_))[9];
+
+  printf("%20s %35s", localtime($mtime)->strftime("%D %T"), "$miner/$algo");
+  printf(" %14s", "(no data)") if $speed == 0xffffffff;
+  printf(" %14.8f", $speed) if $speed != 0xffffffff;
+  printf(" * %14.8f", $rate);
+  printf(" = %14s BTC/day", "(unknown)") if $speed == 0xffffffff;
+  printf(" = %14.8f BTC/day", $profit) if $speed != 0xffffffff;
+  printf(" (%3s)", $window);
+  print(" <--") if $transition;
+  print("\n");
+
+  $mining_miner = $miner;
+  $mining_algo = $algo;
+};
+my $preprocess = sub {
+  sort { int($a) <=> int($b) } # increasing order
+  grep { /^[0-9]+$/ } @_
+};
+chdir($history_dir) or die "chdir($history_dir) : $!";
+finddepth({ wanted => $wanted, preprocess => $preprocess }, ".");
+
+if($unmatched)
+{
+  print("ignored $unmatched records\n");
+}

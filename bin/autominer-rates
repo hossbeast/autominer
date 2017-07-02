@@ -1,0 +1,104 @@
+#!/bin/env perl
+
+use strict;
+use warnings;
+
+use File::Basename;
+use Cwd;
+our $repodir;
+BEGIN { $repodir = dirname(Cwd::realpath("$0/..")) }
+use lib "$repodir/lib";
+use util;
+use release;
+override_warn_and_die();
+
+use JSON::XS;
+use config;
+
+our $verbose = 0;
+our %opts = (
+    'datadir'       => $ENV{HOME} . "/.autominer/data"
+  , 'sort'          => 'h3'
+  , 'profile'       => 'default'
+);
+my %optargs = (
+    'help|h'        => \$opts{help}
+  , 'version|V'     => \$opts{version}
+  , 'verbose|v'     => \$opts{verbose}
+  , 'data-dir=s'    => \$opts{datadir}
+  , 'profile=s'     => \$opts{profile}
+
+  , 'sort|s=s'      => \$opts{sort}
+  , 'reverse'       => \$opts{reverse}
+);
+configure(\%optargs, \%opts);
+
+if($opts{help})
+{
+  print <<HELP;
+autominer - an autoswitching miner for linux, version $release::number
+
+ >> BTC donations : 184AtMD3AihYke2bKQD9AXh4Dgzvtr7jhA (hossbeast)
+
+usage: autominer rates [options] [miner/algo]
+
+ --version
+ --help
+ --verbose
+
+optional
+ --sort s30|m1|m5|m10|h1|h3
+ --reverse
+
+For more information visit https://github.com/hossbeast/autominer
+HELP
+  exit 0
+}
+if($opts{version})
+{
+  print "autominer-$release::number\n";
+  exit 0;
+}
+
+# get current rates for hashpower
+my %rates;
+for my $period (qw|s30 m1 m5 m10 h1 h3|)
+{
+  open(my $fh, "<$opts{datadir}/rates/nicehash/$period") or die $!;
+  my $text = do { local $/ = undef ; <$fh> };
+  close $fh;
+
+  $rates{$period} = decode_json($text);
+}
+
+# compute percentage deltas
+my @algos = keys %{$rates{s30}};
+my %pct_deltas;
+for my $algo (@algos)
+{
+  $pct_deltas{$algo} = 0;
+  if($rates{$opts{sort}}{$algo})
+  {
+    my $delta = $rates{s30}{$algo} - $rates{$opts{sort}}{$algo};
+    $pct_deltas{$algo} = ($delta / $rates{$opts{sort}}{$algo}) * 100;
+  }
+}
+
+my $sort_mod = 1;
+$sort_mod = -1 if $opts{reverse};
+@algos = sort { ($pct_deltas{$b} <=> $pct_deltas{$a}) * $sort_mod } @algos;
+
+printf("%20s %14s %14s %14s %14s %14s %14s\n", "", qw|h3 h1 m10 m5 m1 s30|);
+for my $algo (@algos)
+{
+  printf("%20s %14.8f %14.8f %14.8f %14.8f %14.8f %14.8f %8s\n"
+    , $algo
+    , $rates{h3}{$algo}
+    , $rates{h1}{$algo}
+    , $rates{m10}{$algo}
+    , $rates{m5}{$algo}
+    , $rates{m1}{$algo}
+    , $rates{s30}{$algo}
+    , sprintf("%%%6.2f", $pct_deltas{$algo})
+  );
+}

@@ -1,0 +1,335 @@
+#!/bin/env perl
+
+use strict;
+use warnings;
+
+use File::Basename;
+use Cwd;
+our $repodir;
+BEGIN { $repodir = dirname(Cwd::realpath("$0/..")) }
+use lib "$repodir/lib";
+use util;
+use release;
+override_warn_and_die();
+
+use Time::Piece;
+use JSON::XS;
+use POSIX ':sys_wait_h';
+use File::Find;
+use config;
+use profitability;
+use miner;
+use perf;
+
+our $verbose = 0;
+our %opts = (
+    'period'        => 60 * 10        # six minutes
+  , 'retention'     => 10 * 24 * 30   # one month
+  , 'samples'       => 60 * 10        # ten miuntes
+  , 'profile'       => 'default'
+  , 'window'        => 'm5'
+);
+my %optargs = (
+    'help|h'        => \$opts{help}
+  , 'version|V'     => \$opts{version}
+  , 'verbose|v'     => \$opts{verbose}
+
+  , 'data-dir=s'    => \$opts{datadir}
+  , 'profile=s'     => \$opts{profile}
+  , 'username|u=s'  => \$opts{username}
+  , 'period=i'      => \$opts{period}
+  , 'cards=s'       => \$opts{cards}
+  , 'retention=i'   => \$opts{retention}    # benchmark files to retain
+  , 'samples=i'     => \$opts{samples}      # samples to use in speed calculation
+  , 'window=s'      => \$opts{window}
+);
+configure(\%optargs, \%opts);
+
+if($opts{help})
+{
+  print <<HELP;
+autominer - an autoswitching miner for linux, version $release::number
+
+ >> BTC donations : 184AtMD3AihYke2bKQD9AXh4Dgzvtr7jhA (hossbeast)
+
+usage: autominer mine [options]
+
+ --help                 print this help text
+ --version              print the version number, exit
+ --verbose              print commands as they are run
+ --quiet                dont echo output from the miner to stdout
+
+required
+ --username <addr>      where to send rewards
+ --cards <device-ids>   comma-separated list of devices ids to mine with
+ --data-dir <path>      base location for perf, history and market data
+
+optional
+ --profile <name>       separate config file, perf and history data
+ --period <seconds>     how frequently to re-evaluate what to mine
+ --retention <number>   number of per-period sessions to retain
+ --samples <seconds>    number of trailing perf samples to estimate future performance from
+
+For more information visit https://github.com/hossbeast/autominer
+HELP
+  exit 0
+}
+if($opts{version})
+{
+  print "autominer-$release::number\n";
+  exit 0;
+}
+
+die "missing required config --username" unless $opts{username};
+die "missing required config --data-dir" unless $opts{datadir};
+die "missing required config --cards" unless defined $opts{"comma-cards"};
+
+printf("parameters\n");
+printf("%20s %s\n", "username", $opts{username});
+printf("%20s %s\n", "profile", $opts{profile});
+printf("%20s %s\n", "data-dir", $opts{datadir});
+printf("%20s %s\n", "cards", $opts{"comma-cards"});
+printf("%20s %s\n", "evaluation period", $opts{period});
+printf("%20s %s\n", "samples", $opts{samples});
+printf("%20s %s\n", "retention", $opts{retention});
+
+$SIG{CHLD} = 'IGNORE';
+
+# ensure directories exist
+mkdir("$opts{datadir}");
+mkdir("$opts{datadir}/bench");
+mkdir("$opts{datadir}/bench/$opts{profile}");
+mkdir("$opts{datadir}/history");
+mkdir("$opts{datadir}/history/$opts{profile}");
+
+# load miners
+my %miners = enumerate_miners("$repodir/miners");
+die "no miners" unless %miners;
+
+for my $miner (values %miners)
+{
+  # load supported algorithms
+  enumerate_algos($miner);
+
+  mkdir("$opts{datadir}/bench/$opts{profile}/$$miner{name}");
+
+  # load benchmark data per algo
+  for my $algo (values %{$$miner{algos}})
+  {
+    mkdir("$opts{datadir}/bench/$opts{profile}/$$miner{name}/$$algo{name}");
+
+    # setup a perf filter
+    perf_readdir($miner, $algo, "$opts{datadir}/bench/$opts{profile}");
+  }
+}
+
+# initialize history files
+my $history_dir = "$opts{datadir}/history/$opts{profile}";
+my $history_min_file = 0;
+my $history_max_file = 0;
+my $wanted = sub {
+  return if $_ eq "." or $_ eq "..";
+
+  my $num = int($_);
+  $history_max_file = $num;
+  $history_min_file = $num unless defined $history_min_file;
+
+  if(($history_max_file - $history_min_file) >= $::opts{retention})
+  {
+    unlink sprintf("%s/%05u", $history_dir, $history_min_file);
+    $history_min_file++;
+  }
+};
+my $preprocess = sub {
+  sort { int($a) <=> int($b) } # increasing order
+  grep { /^[0-9]+$/ } @_
+};
+chdir($history_dir) or die "chdir($history_dir) : $!";
+finddepth({ wanted => $wanted, preprocess => $preprocess }, ".");
+
+my $mining_miner = '';
+my $mining_algo = '';
+
+my $miner_pid = 0;
+my $perf_pid = 0;
+
+$SIG{CHLD} = sub {
+  local ($!, $?);
+  while((my $pid = waitpid(-1, WNOHANG)) > 0) {
+    if($pid == $miner_pid)
+    {
+      printf("CHLD miner-pid=$pid, exit=$?\n");
+      $miner_pid = 0;
+    }
+    elsif($pid == $perf_pid)
+    {
+      printf("CHLD perf-pid=$pid, exit=$?\n");
+      $perf_pid = 0;
+    }
+  }
+};
+
+# pipes are named according to which process writes to it
+my ($miner_reader_fd, $miner_writer_fd) = POSIX::pipe();
+my ($miner_tee_reader_fd, $miner_tee_writer_fd) = POSIX::pipe();
+my ($perf_reader_fd, $perf_writer_fd) = POSIX::pipe();
+
+sub getrates
+{
+  my $window = shift;
+
+  my $path = "$opts{datadir}/rates/nicehash/$window";
+  open(my $fh, "<$path") or die "open($path) : $!";
+  my $text = do { local $/ = undef ; <$fh> };
+  close $fh;
+
+  decode_json($text);
+}
+
+my $rates = getrates($opts{window});
+while(1)
+{
+  my @options = profitability(\%miners, $rates);
+  @options = sort { $$b{profit} <=> $$a{profit} } @options;
+  my $option = $options[0];
+
+  for my $option (@options)
+  {
+    my $profit = "(no data)";
+    if($$option{algo}{speed} != 0xFFFFFFFF) {
+      $profit = sprintf("%14.8f", $$option{profit});
+    }
+
+    printf "miner %-20s algo %-20s rate %14.8f * speed %14.8f = profit %-10s\n"
+      , $$option{miner}{name}
+      , $$option{algo}{name}
+      , $$option{rate}
+      , $$option{algo}{speed}
+      , $profit
+    ;
+  }
+
+  my $miner = $$option{miner};
+  my $algo = $$option{algo};
+
+  # open a new bench file to store the results of this run
+  my $miner_bench_dir = "$opts{datadir}/bench/$opts{profile}/$$miner{name}";
+  my $algo_bench_dir = "$miner_bench_dir/$$algo{name}";
+  my $bench_file_num = ($$algo{max_file} || 0) + 1;
+  my $bench_path = sprintf("%s/%05u", $algo_bench_dir, $bench_file_num);
+  open(my $bench_fh, ">$bench_path") or die "open($bench_path) : $!";
+
+  # the header line contains details about the selected option
+  my $perf_header = sprintf("%-10s %s/%s %3s %14.8f * %14.8f = %14.8f\n\n"
+    , $release::number
+    , $$miner{name}
+    , $$algo{name}
+    , $opts{window}
+    , $$algo{speed}
+    , $$option{rate}
+    , $$option{profit}
+  );
+  syswrite($bench_fh, $perf_header, length($perf_header));
+
+  # advance the history files
+  my $history_file_num = ++$history_max_file;
+  my $history_path = sprintf("%s/%05u", $history_dir, $history_file_num);
+  symlink($bench_path, $history_path) or die "symlink($bench_path, $history_path) : $!";
+  if(($history_max_file - $history_min_file) >= $::opts{retention})
+  {
+    unlink sprintf("%s/%05u", $history_dir, $history_min_file);
+    $history_min_file++;
+  }
+
+  if($$miner{name} ne $mining_miner || $$algo{name} ne $mining_algo)
+  {
+    miner_env_setup($miner, $algo);
+
+    # miner writes to miner-tee
+    killfast([ \$miner_pid, \$perf_pid ]);
+    $miner_pid = fork;
+    if($miner_pid == 0)
+    {
+      POSIX::dup2($miner_writer_fd, 1);
+
+      pr_set_pdeathsig(9);
+
+      my @cmd = ($$miner{path}, "mine");
+      exec { $cmd[0] } @cmd;
+    }
+
+    # perf reads from miner-tee, and writes to perf-tee
+    $perf_pid = fork;
+    if($perf_pid == 0)
+    {
+      POSIX::dup2($miner_tee_reader_fd, 0);
+      POSIX::dup2($perf_writer_fd, 1);
+
+      pr_set_pdeathsig(9);
+
+      my @cmd = ($$miner{path}, "perf");
+      exec { $cmd[0] } @cmd;
+    }
+
+    $mining_miner = $$miner{name};
+    $mining_algo = $$algo{name};
+  }
+
+  # read from the perf pipe until the period elapses
+  perf_startfile($miner, $algo);
+
+  my $T = time();
+  my $buffer = '';
+  my $data;
+  my $s30;
+
+  my $rin = '';
+  vec($rin, $miner_reader_fd, 1) = 1;
+  vec($rin, $perf_reader_fd, 1) = 1;
+  while(1)
+  {
+    my $r = select(my $rout = $rin, undef, undef, undef);
+
+    # miner-tee reads from miner, writes to perf, and tees to stdout
+    if(vec($rout, $miner_reader_fd, 1) == 1)
+    {
+      my $r = POSIX::read($miner_reader_fd, $data, 0xffff);
+      POSIX::write(1, $data, $r);
+      POSIX::write($miner_tee_writer_fd, $data, $r);
+    }
+
+    # perf-tee reads from perf and writes to /bench/foo - optionally tees to stdout
+    if(vec($rout, $perf_reader_fd, 1) == 1)
+    {
+      my $r = POSIX::read($perf_reader_fd, $data, 0xffff);
+      $buffer .= $data;
+
+      $s30 = undef;
+
+      # consume full lines
+      while((my $nl = index($buffer, "\n")) >= 0)
+      {
+        my $line = substr($buffer, 0, $nl + 1, '');
+        chomp $line;
+
+        # get the most current rates
+        $s30 = getrates("s30") if not defined $s30;
+
+        my $record = sprintf("%s %14.8f\n", $line, $$s30{$$algo{name}});
+        syswrite($bench_fh, $record, length($record));
+
+        perf_readline($miner, $algo, $line);
+      }
+
+      # only leave the loop after reading a perf record to minimize lost shares when switching
+      last if (time() - $T) >= ($opts{period});
+    }
+  }
+
+  close($bench_fh);
+  perf_endfile($miner, $algo, $algo_bench_dir, $bench_file_num);
+  perf_update($miner, $algo);
+
+  $rates = $s30 if $opts{window} eq "s30";
+  $rates = getrates($opts{window}) if $opts{window} ne "s30";
+}

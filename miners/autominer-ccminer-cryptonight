@@ -1,0 +1,54 @@
+#!/usr/bin/env perl
+
+#
+# autominer wrapper for https://github.com/KlausT/ccminer-cryptonight
+#
+
+use strict;
+use warnings;
+
+use POSIX;
+
+if($ARGV[0] eq "configured")
+{
+  system("ccminer-cryptonight -V 1>/dev/null 2>&1");
+  print "yes\n" if $? == 0;
+}
+elsif($ARGV[0] eq "algos")
+{
+  print("cryptonight\n");
+}
+elsif($ARGV[0] eq "mine")
+{
+  my @cmd = (
+      "ccminer-cryptonight"
+    , "-o", "stratum+tcp://$ENV{AUTOMINER_ALGO}.usa.nicehash.com:$ENV{AUTOMINER_PORT}"
+    , "-u", "$ENV{AUTOMINER_USERNAME}"
+  );
+
+  if(defined $ENV{AUTOMINER_CARDS_COMMAS})
+  {
+    push @cmd, "-d", "$ENV{AUTOMINER_CARDS_COMMAS}";
+  }
+
+  print(" >> ccminer-cryptonight : @cmd\n");
+
+  POSIX::dup2(1, 2) or die;
+  exec { $cmd[0] } @cmd;
+}
+elsif($ARGV[0] eq "perf")
+{
+  while(my $line = <STDIN>)
+  {
+    chomp $line;
+
+    if($line =~ / ([0-9.]+) (k|m|g|t|p)?h\/s/i)
+    {
+      my $rate = $1;
+      my $units = $2 || '';
+
+      my $record = sprintf("%10u %s %sh/s\n", time() - $^T, $rate, $units);
+      POSIX::write(1, $record, length($record));
+    }
+  }
+}

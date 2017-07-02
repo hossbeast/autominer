@@ -1,0 +1,57 @@
+#!/usr/bin/env perl
+
+#
+# autominer wrapper for https://github.com/nicehash/nheqminer
+#
+
+use strict;
+use warnings;
+
+use POSIX;
+
+if($ARGV[0] eq "configured")
+{
+  system("nheqminer_cuda -h 1>/dev/null 2>&1");
+  print "yes\n" if $? == 0;
+}
+elsif($ARGV[0] eq "algos")
+{
+  print("equihash\n");
+}
+elsif($ARGV[0] eq "mine")
+{
+  my $intensity = 25;
+
+  my @cmd = (
+      "/usr/bin/nheqminer_cuda"
+    , "-l", "$ENV{AUTOMINER_ALGO}.usa.nicehash.com:$ENV{AUTOMINER_PORT}"
+    , "-u", "$ENV{AUTOMINER_USERNAME}"
+  );
+
+  if(defined $ENV{AUTOMINER_CARDS_SPACES})
+  {
+    push @cmd, "-cd", split(/ /, "$ENV{AUTOMINER_CARDS_SPACES}");
+  }
+
+  print(" >> nheqminer_cuda : @cmd\n");
+
+  # nheqminer_cuda writes benchmark data to stderr
+  POSIX::dup2(1, 2) or die;
+  exec { $cmd[0] } @cmd;
+}
+elsif($ARGV[0] eq "perf")
+{
+  while(my $line = <STDIN>)
+  {
+    chomp $line;
+
+    # [21:41:34][0x00007fef827db240] Speed [15 sec]: 504.006 I/s, 953.507 Sols/s
+    if($line =~ /Speed.* ([0-9.]+) Sols\/s/i)
+    {
+      my $rate = $1;
+
+      my $record = sprintf("%10u %s %s/s\n", time() - $^T, $rate, "s");
+      POSIX::write(1, $record, length($record));
+    }
+  }
+}

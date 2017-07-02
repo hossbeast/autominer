@@ -1,0 +1,94 @@
+#!/usr/bin/env perl
+
+#
+# autominer wrapper for https://github.com/tpruvot/ccminer
+#
+
+use strict;
+use warnings;
+
+use POSIX;
+
+if($ARGV[0] eq "configured")
+{
+  system("ccminer -V 1>/dev/null 2>&1");
+  print "yes\n" if $? == 0;
+}
+elsif($ARGV[0] eq "algos")
+{
+  my $go = 0;
+  for(map { chomp ; $_ } `ccminer -h`)
+  {
+    # algorithms are listed in the help output after this line
+    if(/specify the hash algorithm/)
+    {
+      $go = 1;
+    }
+    # and before this line
+    elsif(/--devices/)
+    {
+      $go = 0;
+    }
+    elsif($go && /\s*([a-z0-9-_]+)/i)
+    {
+      # known to not work well
+      next if $1 eq "cryptonight";
+      next if $1 eq "decred";
+      next if $1 eq "qubit";
+      next if $1 eq "scrypt";
+      next if $1 eq "sia";
+
+      print "$1\n";
+    }
+  }
+}
+elsif($ARGV[0] eq "mine")
+{
+  my $intensity = 25;
+  $intensity = 22 if $ENV{AUTOMINER_ALGO} eq "lyra2rev2";
+  $intensity = 20 if $ENV{AUTOMINER_ALGO} eq "x11"; # prevents out-of-memory errors
+  $intensity = 20 if $ENV{AUTOMINER_ALGO} eq "x13";
+  $intensity = 20 if $ENV{AUTOMINER_ALGO} eq "x15";
+
+  my @cmd = (
+      "ccminer"
+    , "-o", "stratum+tcp://$ENV{AUTOMINER_ALGO}.usa.nicehash.com:$ENV{AUTOMINER_PORT}"
+    , "-u", "$ENV{AUTOMINER_USERNAME}"
+    , "-a", "$ENV{AUTOMINER_ALGO}"
+    , "-i", "$intensity"
+  );
+
+  if(defined $ENV{AUTOMINER_CARDS_COMMAS})
+  {
+    push @cmd, "-d", $ENV{AUTOMINER_CARDS_COMMAS};
+  }
+
+  print(" >> ccminer : @cmd\n");
+
+  POSIX::dup2(1, 2) or die;
+  exec { $cmd[0] } @cmd;
+}
+elsif($ARGV[0] eq "perf")
+{
+  while(my $line = <STDIN>)
+  {
+    chomp $line;
+
+    # [2017-07-04 08:34:46] accepted: 4475/4478 (diff 2.840), 842.37 MH/s yes!
+    if($line =~ /accepted:.*, ([0-9.]+) (k|m|g|t|p)?h\/s.*(yes|booooo)/i)
+    {
+      my $rate = $1;
+      my $units = $2 || '';
+      my $accept = $3;
+
+      # rejected shares - rate is effectively zero for this time slice
+      if($accept eq "booooo")
+      {
+        $rate = 0;
+      }
+
+      my $record = sprintf("%10u %s %sH/s\n", time() - $^T, $rate, $units);
+      POSIX::write(1, $record, length($record));
+    }
+  }
+}

@@ -1,0 +1,8 @@
+# payout address
+--username <your btc address here>
+
+# directory for storing benchmark and market rates data
+--data-dir "/home/todd/.autominer/data"
+
+# comma separated list of cards to mine on
+--cards 0,1

@@ -1,0 +1,66 @@
+#!/usr/bin/env perl
+
+#
+# autominer wrapper for https://github.com/nicehash/sgminer
+#
+
+use strict;
+use warnings;
+
+use Cwd;
+use File::Basename;
+use POSIX;
+
+if($ARGV[0] eq "configured")
+{
+  system("sgminer -V 1>/dev/null 2>&1");
+  print "yes\n" if $? == 0;
+}
+elsif($ARGV[0] eq "algos")
+{
+  print("pascal\n");
+}
+elsif($ARGV[0] eq "mine")
+{
+  my @cmd = (
+      "sgminer"
+    , "-T"
+    , "-k", "$ENV{AUTOMINER_ALGO}"
+    , "-o", "stratum+tcp://$ENV{AUTOMINER_ALGO}.usa.nicehash.com:$ENV{AUTOMINER_PORT}"
+    , "-u", "$ENV{AUTOMINER_USERNAME}"
+    , "-p", "x"
+    , "--intensity", "21"
+    , "-w", "64"
+    , "-g", "2"
+    , "--api-listen"
+    , "--api-port", "4028"
+  );
+
+  if(defined $ENV{AUTOMINER_CARDS_COMMAS})
+  {
+    push @cmd, "-d", $ENV{AUTOMINER_CARDS_COMMAS};
+  }
+
+  # sgminer crashes without this
+  my $sgminer_path = (map { chomp ; $_ } `command -v sgminer`)[0];
+  my $sgminer_dir = dirname(Cwd::realpath("$sgminer_path/.."));
+  chdir($sgminer_dir) or die "chdir($sgminer_dir) : $!";
+
+  print(" >> sgminer : @cmd\n");
+  exec { $cmd[0] } @cmd;
+}
+elsif($ARGV[0] eq "perf")
+{
+  my $rin = '';
+  vec($rin, 1, 1) = 1;
+  while(1)
+  {
+    sleep 10;
+
+    my $status = (map { chomp ; $_ } `echo -n summary | netcat localhost 4028`)[0];
+    $status =~ /MHS 5s=([0-9.]+)/;
+    my $rate = $1;
+    my $record = sprintf("%10u %s %sH/s\n", time() - $^T, $rate, "M");
+    POSIX::write(1, $record, length($record));
+  }
+}
