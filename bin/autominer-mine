@@ -39,11 +39,11 @@ use perf;
 
 our $verbose = 0;
 our %opts = (
-    'period'        => 60 * 10        # six minutes
+    'period'        => 60 * 5         # five minutes
   , 'retention'     => 10 * 24 * 30   # one month
   , 'samples'       => 60 * 10        # ten miuntes
   , 'profile'       => 'default'
-  , 'window'        => 'm5'
+  , 'window'        => 'm10'          # use the trailing 10 minute average
 );
 my %optargs = (
     'help|h'        => \$opts{help}
