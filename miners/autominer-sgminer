@@ -34,7 +34,10 @@ if($ARGV[0] eq "configured")
 }
 elsif($ARGV[0] eq "algos")
 {
-  print("pascal\n");
+  for my $algo (qw|pascal blake256r8 decred sia|)
+  {
+    print("$algo\n");
+  }
 }
 elsif($ARGV[0] eq "mine")
 {
@@ -58,8 +61,7 @@ elsif($ARGV[0] eq "mine")
   }
 
   # sgminer crashes without this
-  my $sgminer_path = (map { chomp ; $_ } `command -v sgminer`)[0];
-  my $sgminer_dir = dirname(Cwd::realpath("$sgminer_path/.."));
+  my $sgminer_dir = (map { chomp ; $_ } `which sgminer | xargs realpath | xargs dirname`)[0];
   chdir($sgminer_dir) or die "chdir($sgminer_dir) : $!";
 
   print(" >> sgminer : @cmd\n");
