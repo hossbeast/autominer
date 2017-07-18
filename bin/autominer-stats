@@ -109,9 +109,9 @@ my $wanted = sub {
     return;
   }
 
-  my $v0re = qr/
+  my $re = qr/
     ^
-    v0
+    (?:v0|v1.0)
     \s+ ([a-z0-9-_]+)\/([a-z0-9-_]+)
     \s+ ([a-z0-9]+)
     \s+ ([0-9.]+)\s+\*
@@ -120,7 +120,7 @@ my $wanted = sub {
     $
   /oxi;
 
-  if($header !~ $v0re)
+  if($header !~ $re)
   {
     $unmatched++;
     return;
