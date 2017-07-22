@@ -113,11 +113,11 @@ printf("%20s %s\n", "retention", $opts{retention});
 $SIG{CHLD} = 'IGNORE';
 
 # ensure directories exist
-mkdir("$opts{datadir}");
-mkdir("$opts{datadir}/bench");
-mkdir("$opts{datadir}/bench/$opts{profile}");
-mkdir("$opts{datadir}/history");
-mkdir("$opts{datadir}/history/$opts{profile}");
+mkdirp("$opts{datadir}");
+mkdirp("$opts{datadir}/bench");
+mkdirp("$opts{datadir}/bench/$opts{profile}");
+mkdirp("$opts{datadir}/history");
+mkdirp("$opts{datadir}/history/$opts{profile}");
 
 # load miners
 my %miners = enumerate_miners("$repodir/miners");
@@ -128,12 +128,12 @@ for my $miner (values %miners)
   # load supported algorithms
   enumerate_algos($miner);
 
-  mkdir("$opts{datadir}/bench/$opts{profile}/$$miner{name}");
+  mkdirp("$opts{datadir}/bench/$opts{profile}/$$miner{name}");
 
   # load benchmark data per algo
   for my $algo (values %{$$miner{algos}})
   {
-    mkdir("$opts{datadir}/bench/$opts{profile}/$$miner{name}/$$algo{name}");
+    mkdirp("$opts{datadir}/bench/$opts{profile}/$$miner{name}/$$algo{name}");
 
     # setup a perf filter
     perf_readdir($miner, $algo, "$opts{datadir}/bench/$opts{profile}");

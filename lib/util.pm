@@ -23,9 +23,10 @@ use warnings;
 
 require Exporter;
 our @ISA = qw|Exporter|;
-our @EXPORT = qw|run killfast curl filter pr_set_pdeathsig override_warn_and_die|;
+our @EXPORT = qw|run killfast curl filter pr_set_pdeathsig override_warn_and_die mkdirp|;
 
 use File::Temp;
+use Errno ':POSIX';
 use Fcntl;
 use Fcntl 'SEEK_SET';
 use POSIX;
@@ -188,6 +189,13 @@ sub filter
 
   POSIX::close($out_reader);
   $output;
+}
+
+sub mkdirp
+{
+  return if mkdir $_[0];
+  return if $!{EEXIST};
+  die "mkdir($_[0]) : $!"
 }
 
 1

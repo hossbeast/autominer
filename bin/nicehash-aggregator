@@ -82,9 +82,10 @@ if($opts{version})
   exit 0;
 }
 
-my $ratesdir = "$opts{datadir}/rates/nicehash";
-my $spooldir = "$opts{datadir}/rates/nicehash/spool";
-my $samplesdir = "$opts{datadir}/rates/nicehash/samples";
+my $basedir = "$opts{datadir}/rates";
+my $ratesdir = "$basedir/nicehash";
+my $spooldir = "$ratesdir/spool";
+my $samplesdir = "$ratesdir/samples";
 my $min_file;
 my $max_file = 0;
 my %slices;         # {m1} => [ { algo => price, algo => price } ] 
@@ -93,9 +94,10 @@ my $num = 0;
 my $report = 0;
 my $writer = JSON::XS->new->pretty(1);
 
-mkdir($ratesdir);
-mkdir($spooldir);
-mkdir($samplesdir);
+mkdirp($basedir);
+mkdirp($ratesdir);
+mkdirp($spooldir);
+mkdirp($samplesdir);
 
 my $stats_global_current = nicehash::stats_global_current();
 for my $algo (keys %$stats_global_current)
