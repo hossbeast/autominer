@@ -1,4 +1,4 @@
-#!/bin/env perl
+#!/usr/bin/env perl
 
 # Copyright (c) 2017 Todd Freed <todd.freed@gmail.com>
 # 
@@ -312,7 +312,6 @@ while(1)
     if(!$miner_pid || !$perf_pid)
     {
       print("miner or perf terminated early!");
-      sleep 3;
       last;
     }
 
