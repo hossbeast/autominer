@@ -4,6 +4,26 @@ autominer is a utility for cryptocurrency miners that selects the miner
 and algorithm to mine based on past performance and current market rates
 in order to achieve the optimal mining strategy.
 
+# Installing
+
+Install perl and curl if necessary (these come standard with every linux distro).
+
+Install the perl module JSON::XS.
+
+## Arch Linux
+
+````
+sudo pacman -S perl-json-xs
+````
+
+## Ubuntu
+
+````
+sudo apt-get install libjson-xs-perl
+````
+
+The autominer program expects to be executed from directory structure in this repository.
+
 # Getting Started
 
 Create a config file and supply your btc address as username
