@@ -40,10 +40,10 @@ use perf;
 our $verbose = 0;
 our %opts = (
     'period'        => 60 * 1         # one minute
+  , 'window'        => 'm5'           # the trailing 5 minute average
   , 'retention'     => 10 * 24 * 30   # one month
   , 'samples'       => 60 * 10        # ten miuntes
   , 'profile'       => 'default'
-  , 'window'        => 'm5'           # use the trailing 5 minute average
 );
 my %optargs = (
     'help|h'        => \$opts{help}
@@ -173,14 +173,16 @@ my $perf_pid = 0;
 $SIG{CHLD} = sub {
   local ($!, $?);
   while((my $pid = waitpid(-1, WNOHANG)) > 0) {
+    my $exit = $? >> 8;
+    my $sig = $? & 127;
     if($pid == $miner_pid)
     {
-      printf("CHLD miner-pid=$pid, exit=$?\n");
+      printf("CHLD miner-pid=$pid, status=$?, exit=$exit, signal=$sig\n");
       $miner_pid = 0;
     }
     elsif($pid == $perf_pid)
     {
-      printf("CHLD perf-pid=$pid, exit=$?\n");
+      printf("CHLD perf-pid=$pid, status=$?, exit=$exit, signal=$sig\n");
       $perf_pid = 0;
     }
   }
@@ -188,8 +190,8 @@ $SIG{CHLD} = sub {
 
 # pipes are named according to which process writes to it
 my ($miner_reader_fd, $miner_writer_fd) = POSIX::pipe();
-my ($miner_tee_reader_fd, $miner_tee_writer_fd) = POSIX::pipe();
 my ($perf_reader_fd, $perf_writer_fd) = POSIX::pipe();
+my ($autominer_reader_fd, $autominer_writer_fd) = POSIX::pipe();
 
 sub getrates
 {
@@ -258,11 +260,11 @@ while(1)
     $history_min_file++;
   }
 
-  if($$miner{name} ne $mining_miner || $$algo{name} ne $mining_algo)
+  if(!$miner_pid || !$perf_pid || $$miner{name} ne $mining_miner || $$algo{name} ne $mining_algo)
   {
     miner_env_setup($miner, $algo);
 
-    # miner writes to miner-tee
+    # miner writes to autominer
     killfast([ \$miner_pid, \$perf_pid ]);
     $miner_pid = fork;
     if($miner_pid == 0)
@@ -275,11 +277,11 @@ while(1)
       exec { $cmd[0] } @cmd;
     }
 
-    # perf reads from miner-tee, and writes to perf-tee
+    # perf reads from autominer via one pipe, and writes to autominer via a separate pipe
     $perf_pid = fork;
     if($perf_pid == 0)
     {
-      POSIX::dup2($miner_tee_reader_fd, 0);
+      POSIX::dup2($autominer_reader_fd, 0);
       POSIX::dup2($perf_writer_fd, 1);
 
       pr_set_pdeathsig(9);
@@ -305,17 +307,24 @@ while(1)
   vec($rin, $perf_reader_fd, 1) = 1;
   while(1)
   {
-    my $r = select(my $rout = $rin, undef, undef, undef);
+    my $r = select(my $rout = $rin, undef, undef, 5);
 
-    # miner-tee reads from miner, writes to perf, and tees to stdout
+    if(!$miner_pid || !$perf_pid)
+    {
+      print("miner or perf terminated early!");
+      sleep 3;
+      last;
+    }
+
+    # read from miner, write to perf, tee to stdout
     if(vec($rout, $miner_reader_fd, 1) == 1)
     {
       my $r = POSIX::read($miner_reader_fd, $data, 0xffff);
       POSIX::write(1, $data, $r);
-      POSIX::write($miner_tee_writer_fd, $data, $r);
+      POSIX::write($autominer_writer_fd, $data, $r);
     }
 
-    # perf-tee reads from perf and writes to /bench/foo - optionally tees to stdout
+    # read from perf, write to /bench/foo
     if(vec($rout, $perf_reader_fd, 1) == 1)
     {
       my $r = POSIX::read($perf_reader_fd, $data, 0xffff);
@@ -331,14 +340,13 @@ while(1)
 
         # get the most current rates
         $s30 = getrates("s30") if not defined $s30;
-
         my $record = sprintf("%s %14.8f\n", $line, $$s30{$$algo{name}});
         syswrite($bench_fh, $record, length($record));
 
         perf_readline($miner, $algo, $line);
       }
 
-      # only leave the loop after reading a perf record to minimize lost shares when switching
+      # minimize lost shares by switching right after reading a perf record
       last if (time() - $T) >= ($opts{period});
     }
   }
