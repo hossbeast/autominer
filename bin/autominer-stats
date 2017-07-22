@@ -98,7 +98,14 @@ my $wanted = sub {
 
   return if $opts{transitions} and not $transition;
 
-  open(my $fh, "<$history_dir/$_") or die("open($history_dir/$_) : $!");
+  my $fh;
+  unless(open($fh, "<$history_dir/$_"))
+  {
+    $unmatched++;
+    return;
+  }
+
+  return unless $fh;
   my $header = <$fh>;
   chomp $header if $header;
   close($fh);
