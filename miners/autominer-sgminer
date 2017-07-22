@@ -23,9 +23,16 @@
 use strict;
 use warnings;
 
-use Cwd;
-use File::Basename;
 use POSIX;
+
+# pick a random port by profile so that multiple instances can coexist
+sub get_api_port
+{
+  my $sum = 0;
+  map { $sum += ord } split(//, $ENV{AUTOMINER_PROFILE});
+
+  sprintf("%d", 4000 + ($sum % (1 << 62)))
+}
 
 if($ARGV[0] eq "configured")
 {
@@ -52,7 +59,7 @@ elsif($ARGV[0] eq "mine")
     , "-w", "64"
     , "-g", "2"
     , "--api-listen"
-    , "--api-port", "4028"
+    , "--api-port", get_api_port()
   );
 
   if(defined $ENV{AUTOMINER_CARDS_COMMAS})
@@ -69,13 +76,15 @@ elsif($ARGV[0] eq "mine")
 }
 elsif($ARGV[0] eq "perf")
 {
+  my $cmd = sprintf("echo -n summary | netcat localhost %d", get_api_port());
+
   my $rin = '';
   vec($rin, 1, 1) = 1;
   while(1)
   {
     sleep 10;
 
-    my $status = (map { chomp ; $_ } `echo -n summary | netcat localhost 4028`)[0];
+    my $status = (map { chomp ; $_ } `$cmd`)[0];
     $status =~ /MHS 5s=([0-9.]+)/;
     my $rate = $1;
     my $record = sprintf("%10u %s %sH/s\n", time() - $^T, $rate, "M");

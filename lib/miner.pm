@@ -114,4 +114,5 @@ sub miner_env_setup
   $ENV{AUTOMINER_USERNAME} = $::opts{username};
   $ENV{AUTOMINER_CARDS_SPACES} = $::opts{"space-cards"};
   $ENV{AUTOMINER_CARDS_COMMAS} = $::opts{"comma-cards"};
+  $ENV{AUTOMINER_PROFILE} = $::opts{profile};
 }
