@@ -74,6 +74,13 @@ elsif($ARGV[0] eq "mine")
     , "-i", "$intensity"
   );
 
+  # difficulty is not handled properly for keccak by ccminer - bump it up to maximize shares
+  # if you get rejected shares - this parameter is probably at issue
+  if($ENV{AUTOMINER_ALGO} eq "keccak")
+  {
+    push @cmd, "-f", "2";
+  }
+
   if(defined $ENV{AUTOMINER_CARDS_COMMAS})
   {
     push @cmd, "-d", $ENV{AUTOMINER_CARDS_COMMAS};
