@@ -36,7 +36,7 @@ sub get_api_port
 
 if($ARGV[0] eq "configured")
 {
-  system("sgminer -V 1>/dev/null 2>&1");
+  system("$ENV{AUTOMINER_SGMINER_PATH} -V 1>/dev/null 2>&1");
   print "yes\n" if $? == 0;
 }
 elsif($ARGV[0] eq "algos")
@@ -49,7 +49,7 @@ elsif($ARGV[0] eq "algos")
 elsif($ARGV[0] eq "mine")
 {
   my @cmd = (
-      "sgminer"
+      "$ENV{AUTOMINER_SGMINER_PATH}"
     , "-T"
     , "-k", "$ENV{AUTOMINER_ALGO}"
     , "-o", "stratum+tcp://$ENV{AUTOMINER_ALGO}.usa.nicehash.com:$ENV{AUTOMINER_PORT}"
@@ -68,7 +68,7 @@ elsif($ARGV[0] eq "mine")
   }
 
   # sgminer crashes without this
-  my $sgminer_dir = (map { chomp ; $_ } `which sgminer | xargs realpath | xargs dirname`)[0];
+  my $sgminer_dir = (map { chomp ; $_ } `which $ENV{AUTOMINER_SGMINER_PATH} | xargs realpath | xargs dirname`)[0];
   chdir($sgminer_dir) or die "chdir($sgminer_dir) : $!";
 
   print(" >> sgminer : @cmd\n");
@@ -78,8 +78,6 @@ elsif($ARGV[0] eq "perf")
 {
   my $cmd = sprintf("echo -n summary | netcat localhost %d", get_api_port());
 
-  my $rin = '';
-  vec($rin, 1, 1) = 1;
   while(1)
   {
     sleep 10;

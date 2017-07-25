@@ -27,13 +27,13 @@ use POSIX;
 
 if($ARGV[0] eq "configured")
 {
-  system("ccminer -V 1>/dev/null 2>&1");
+  system("$ENV{AUTOMINER_CCMINER_PATH} -V 1>/dev/null 2>&1");
   print "yes\n" if $? == 0;
 }
 elsif($ARGV[0] eq "algos")
 {
   my $go = 0;
-  for(map { chomp ; $_ } `ccminer -h`)
+  for(map { chomp ; $_ } `$ENV{AUTOMINER_CCMINER_PATH} -h`)
   {
     # algorithms are listed in the help output after this line
     if(/specify the hash algorithm/)
@@ -47,7 +47,7 @@ elsif($ARGV[0] eq "algos")
     }
     elsif($go && /\s*([a-z0-9-_]+)/i)
     {
-      # known to not work well
+      # known to not work well under ccminer
       next if $1 eq "cryptonight";
       next if $1 eq "decred";
       next if $1 eq "qubit";
@@ -67,7 +67,7 @@ elsif($ARGV[0] eq "mine")
   $intensity = 20 if $ENV{AUTOMINER_ALGO} eq "x15";
 
   my @cmd = (
-      "ccminer"
+      "$ENV{AUTOMINER_CCMINER_PATH}"
     , "-o", "stratum+tcp://$ENV{AUTOMINER_ALGO}.usa.nicehash.com:$ENV{AUTOMINER_PORT}"
     , "-u", "$ENV{AUTOMINER_USERNAME}"
     , "-a", "$ENV{AUTOMINER_ALGO}"
@@ -86,7 +86,7 @@ elsif($ARGV[0] eq "mine")
     push @cmd, "-d", $ENV{AUTOMINER_CARDS_COMMAS};
   }
 
-  print(" >> ccminer : @cmd\n");
+  print STDERR (" >> ccminer : @cmd\n");
 
   POSIX::dup2(1, 2) or die;
   exec { $cmd[0] } @cmd;

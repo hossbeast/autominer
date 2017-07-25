@@ -49,7 +49,7 @@ elsif($ARGV[0] eq "mine")
     push @cmd, "--cuda-devices", "$ENV{AUTOMINER_CARDS_SPACES}";
   }
 
-  print(" >> ethminer : @cmd\n");
+  print STDERR (" >> ethminer : @cmd\n");
 
   POSIX::dup2(1, 2) or die;
   exec { $cmd[0] } @cmd;

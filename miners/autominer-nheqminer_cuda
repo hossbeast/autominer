@@ -27,7 +27,7 @@ use POSIX;
 
 if($ARGV[0] eq "configured")
 {
-  system("nheqminer_cuda -h 1>/dev/null 2>&1");
+  system("$ENV{AUTOMINER_NHEQMINER_CUDA_PATH} -h 1>/dev/null 2>&1");
   print "yes\n" if $? == 0;
 }
 elsif($ARGV[0] eq "algos")
@@ -39,7 +39,7 @@ elsif($ARGV[0] eq "mine")
   my $intensity = 25;
 
   my @cmd = (
-      "/usr/bin/nheqminer_cuda"
+      "$ENV{AUTOMINER_NHEQMINER_CUDA_PATH}"
     , "-l", "$ENV{AUTOMINER_ALGO}.usa.nicehash.com:$ENV{AUTOMINER_PORT}"
     , "-u", "$ENV{AUTOMINER_USERNAME}"
   );
@@ -49,8 +49,7 @@ elsif($ARGV[0] eq "mine")
     push @cmd, "-cd", split(/ /, "$ENV{AUTOMINER_CARDS_SPACES}");
   }
 
-  print(" >> nheqminer_cuda : @cmd\n");
-
+  print STDERR (" >> nheqminer_cuda : @cmd\n");
   # nheqminer_cuda writes benchmark data to stderr
   POSIX::dup2(1, 2) or die;
   exec { $cmd[0] } @cmd;

@@ -27,7 +27,7 @@ use POSIX;
 
 if($ARGV[0] eq "configured")
 {
-  system("ccminer-cryptonight -V 1>/dev/null 2>&1");
+  system("$ENV{AUTOMINER_CCMINER_CRYPTONIGHT_PATH} -V 1>/dev/null 2>&1");
   print "yes\n" if $? == 0;
 }
 elsif($ARGV[0] eq "algos")
@@ -37,7 +37,7 @@ elsif($ARGV[0] eq "algos")
 elsif($ARGV[0] eq "mine")
 {
   my @cmd = (
-      "ccminer-cryptonight"
+      "$ENV{AUTOMINER_CCMINER_CRYPTONIGHT_PATH}"
     , "-o", "stratum+tcp://$ENV{AUTOMINER_ALGO}.usa.nicehash.com:$ENV{AUTOMINER_PORT}"
     , "-u", "$ENV{AUTOMINER_USERNAME}"
   );
@@ -47,7 +47,7 @@ elsif($ARGV[0] eq "mine")
     push @cmd, "-d", "$ENV{AUTOMINER_CARDS_COMMAS}";
   }
 
-  print(" >> ccminer-cryptonight : @cmd\n");
+  print STDERR (" >> ccminer-cryptonight : @cmd\n");
 
   POSIX::dup2(1, 2) or die;
   exec { $cmd[0] } @cmd;

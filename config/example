@@ -25,3 +25,10 @@
 
 # comma separated list of cards to mine on
 --cards 0,1
+
+# configure paths to miner executables, if they're not in $PATH
+# --ccminer-path /usr/local/bin/ccminer
+# --ccminer-cryptonight-path /usr/local/bin/ccminer-cryptonight
+# --ethminer-path /usr/local/bin/ethminer
+# --nheqminer-cuda-path /usr/local/bin/nheqminer_cuda
+# --sgminer-path /usr/local/bin/sgminer
