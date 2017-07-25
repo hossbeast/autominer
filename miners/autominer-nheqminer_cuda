@@ -40,7 +40,7 @@ elsif($ARGV[0] eq "mine")
 
   my @cmd = (
       "$ENV{AUTOMINER_NHEQMINER_CUDA_PATH}"
-    , "-l", "$ENV{AUTOMINER_ALGO}.usa.nicehash.com:$ENV{AUTOMINER_PORT}"
+    , "-l", "$ENV{AUTOMINER_ALGO}.$ENV{AUTOMINER_NICEHASH_REGION}.nicehash.com:$ENV{AUTOMINER_PORT}"
     , "-u", "$ENV{AUTOMINER_USERNAME}"
   );
 

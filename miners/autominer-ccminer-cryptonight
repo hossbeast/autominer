@@ -38,7 +38,7 @@ elsif($ARGV[0] eq "mine")
 {
   my @cmd = (
       "$ENV{AUTOMINER_CCMINER_CRYPTONIGHT_PATH}"
-    , "-o", "stratum+tcp://$ENV{AUTOMINER_ALGO}.usa.nicehash.com:$ENV{AUTOMINER_PORT}"
+    , "-o", "stratum+tcp://$ENV{AUTOMINER_ALGO}.$ENV{AUTOMINER_NICEHASH_REGION}.nicehash.com:$ENV{AUTOMINER_PORT}"
     , "-u", "$ENV{AUTOMINER_USERNAME}"
   );
 

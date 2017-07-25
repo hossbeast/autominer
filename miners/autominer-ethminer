@@ -40,7 +40,7 @@ elsif($ARGV[0] eq "mine")
       "ethminer"
     , "-SP" , "2"
     , "-U"
-    , "-S", "$ENV{AUTOMINER_ALGO}.usa.nicehash.com:$ENV{AUTOMINER_PORT}"
+    , "-S", "$ENV{AUTOMINER_ALGO}.$ENV{AUTOMINER_NICEHASH_REGION}.nicehash.com:$ENV{AUTOMINER_PORT}"
     , "-O", "$ENV{AUTOMINER_USERNAME}"
   );
 

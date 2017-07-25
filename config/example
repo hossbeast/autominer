@@ -23,7 +23,11 @@
 # directory for storing benchmark and market rates data
 --data-dir "/home/todd/.autominer/data"
 
-# comma separated list of cards to mine on
+# specify which region(s) to mine in
+--nicehash-usa
+# --nicehash-eu
+
+# comma-separated list of cards to mine on
 --cards 0,1
 
 # configure paths to miner executables, if they're not in $PATH

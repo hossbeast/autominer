@@ -68,14 +68,14 @@ elsif($ARGV[0] eq "mine")
 
   my @cmd = (
       "$ENV{AUTOMINER_CCMINER_PATH}"
-    , "-o", "stratum+tcp://$ENV{AUTOMINER_ALGO}.usa.nicehash.com:$ENV{AUTOMINER_PORT}"
+    , "-o", "stratum+tcp://$ENV{AUTOMINER_ALGO}.$ENV{AUTOMINER_NICEHASH_REGION}.nicehash.com:$ENV{AUTOMINER_PORT}"
     , "-u", "$ENV{AUTOMINER_USERNAME}"
     , "-a", "$ENV{AUTOMINER_ALGO}"
     , "-i", "$intensity"
   );
 
   # difficulty is not handled properly for keccak by ccminer - bump it up to maximize shares
-  # if you get rejected shares - this parameter is probably at issue
+  #  if you get rejected shares - this parameter is probably at issue
   if($ENV{AUTOMINER_ALGO} eq "keccak")
   {
     push @cmd, "-f", "2";
