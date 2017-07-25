@@ -166,6 +166,7 @@ sub perf_readdir
     perf_startfile($miner, $algo);
 
     open(my $fh, "<$dir/$_") or die "open($dir/$_) : $!";
+
     # discard the header
     my $line = <$fh>; $line = <$fh>;
     while($line = <$fh>)

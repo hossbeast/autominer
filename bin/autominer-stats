@@ -118,12 +118,14 @@ my $wanted = sub {
 
   my $re = qr/
     ^
-    (?:v0|v1.0)
-    \s+ ([a-z0-9-_]+)\/([a-z0-9-_]+)
-    \s+ ([a-z0-9]+)
-    \s+ ([0-9.]+)\s+\*
-    \s+ ([0-9.]+)\s+=
-    \s+ ([0-9.]+)
+    (?:v1.0|v1.1|v1.2)
+    \s+ ([0-9]+)                          # 1 unix timestamp
+    \s+ ([a-zA-Z-_]+)                     # 2 market
+    \s+ (?:[a-z0-9-_]+)\/(?:[a-z0-9-_]+)
+    \s+ ([a-z0-9]+)                       # 3 window
+    \s+ ([0-9.]+)\s+\*                    # 4 speed
+    \s+ ([0-9.]+)\s+=                     # 5 rate
+    \s+ ([0-9.]+)                         # 6 profit
     $
   /oxi;
 
@@ -133,6 +135,8 @@ my $wanted = sub {
     return;
   }
 
+  my $start = $1;
+  my $market = $2;
   my $window = $3;
   my $speed = $4;
   my $rate = $5;
@@ -140,7 +144,9 @@ my $wanted = sub {
 
   my $mtime = (stat($_))[9];
 
-  printf("%20s %35s", localtime($mtime)->strftime("%D %T"), "$miner/$algo");
+  printf("%20s", localtime($start)->strftime("%D %T"));
+  printf(" %20s", localtime($mtime)->strftime("%D %T"));
+  printf(" %20s", "$miner/$algo");
   printf(" %14s", "(no data)") if $speed == 0xffffffff;
   printf(" %14.8f", $speed) if $speed != 0xffffffff;
   printf(" * %14.8f", $rate);
@@ -160,7 +166,7 @@ my $preprocess = sub {
 chdir($history_dir) or die "chdir($history_dir) : $!";
 finddepth({ wanted => $wanted, preprocess => $preprocess }, ".");
 
-if($unmatched)
+if ($unmatched and $verbose)
 {
-  print("ignored $unmatched records\n");
+  print("ignored $unmatched records\n")
 }

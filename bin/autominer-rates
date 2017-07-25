@@ -41,8 +41,10 @@ my %optargs = (
     'help|h'        => \$opts{help}
   , 'version|V'     => \$opts{version}
   , 'verbose|v'     => \$opts{verbose}
+
   , 'data-dir=s'    => \$opts{datadir}
   , 'profile=s'     => \$opts{profile}
+  , 'region=s'      => \$opts{region}
 
   , 'sort|s=s'      => \$opts{sort}
   , 'reverse'       => \$opts{reverse}
@@ -62,6 +64,9 @@ usage: autominer rates [options] [miner/algo]
  --help
  --verbose
 
+required
+ --region usa|eu       nicehash region (nicehash calls this a location)
+
 optional
  --sort s30|m1|m5|m10|h1|h3
  --reverse
@@ -76,11 +81,14 @@ if($opts{version})
   exit 0;
 }
 
+die "missing required config --region" unless $opts{region};
+die "unknown region $opts{region}" unless $opts{region} =~ /usa|eu/;
+
 # get current rates for hashpower
 my %rates;
 for my $period (qw|s30 m1 m5 m10 h1 h3|)
 {
-  open(my $fh, "<$opts{datadir}/rates/nicehash/$period") or die $!;
+  open(my $fh, "<$opts{datadir}/rates/nicehash-$opts{region}/$period") or die $!;
   my $text = do { local $/ = undef ; <$fh> };
   close $fh;
 

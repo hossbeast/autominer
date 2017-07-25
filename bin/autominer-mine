@@ -29,11 +29,11 @@ use release;
 override_warn_and_die();
 
 use Time::Piece;
+use Data::Dumper;
 use JSON::XS;
 use POSIX ':sys_wait_h';
 use File::Find;
 use config;
-use profitability;
 use miner;
 use perf;
 
@@ -42,22 +42,40 @@ our %opts = (
     'period'        => 60 * 1         # one minute
   , 'window'        => 'm5'           # the trailing 5 minute average
   , 'retention'     => 10 * 24 * 30   # one month
-  , 'samples'       => 60 * 10        # ten miuntes
+  , 'samples'       => 60 * 10        # ten minutes
   , 'profile'       => 'default'
+  , 'worker'        => ''
+
+  # miner executables expected to be in $PATH by default
+  , 'ccminer_path'              => 'ccminer'
+  , 'ccminer_cryptonight_path'  => 'ccminer-cryptonight'
+  , 'ethminer_path'             => 'ethminer'
+  , 'nheqminer_cuda_path'       => 'nheqminer_cuda'
+  , 'sgminer_path'              => 'sgminer'
 );
 my %optargs = (
-    'help|h'        => \$opts{help}
-  , 'version|V'     => \$opts{version}
-  , 'verbose|v'     => \$opts{verbose}
+    'help|h'            => \$opts{help}
+  , 'version|V'         => \$opts{version}
+  , 'verbose|v'         => \$opts{verbose}
 
-  , 'data-dir=s'    => \$opts{datadir}
-  , 'profile=s'     => \$opts{profile}
-  , 'username|u=s'  => \$opts{username}
-  , 'period=i'      => \$opts{period}
-  , 'cards=s'       => \$opts{cards}
-  , 'retention=i'   => \$opts{retention}    # benchmark files to retain
-  , 'samples=i'     => \$opts{samples}      # samples to use in speed calculation
-  , 'window=s'      => \$opts{window}
+  , 'data-dir=s'        => \$opts{datadir}
+  , 'profile=s'         => \$opts{profile}
+  , 'payout-address=s'  => \$opts{payout_address}
+  , 'worker=s'          => \$opts{worker}
+  , 'period=i'          => \$opts{period}
+  , 'cards=s'           => \$opts{cards}
+  , 'retention=i'       => \$opts{retention}    # benchmark files to retain
+  , 'samples=i'         => \$opts{samples}      # samples to use in speed calculation
+  , 'window=s'          => \$opts{window}
+
+  , 'nicehash-usa'      => \$opts{"nicehash-usa"}
+  , 'nicehash-eu'       => \$opts{"nicehash-eu"}
+
+  , 'ccminer-path=s'              => \$opts{ccminer_path}
+  , 'ccminer-cryptonight-path=s'  => \$opts{ccminer_cryptonight_path}
+  , 'ethminer-path=s'             => \$opts{ethminer_path}
+  , 'nheqminer-cuda-path=s'       => \$opts{nheqminer_cuda_path}
+  , 'sgminer-path=s'              => \$opts{sgminer_path}
 );
 configure(\%optargs, \%opts);
 
@@ -70,21 +88,33 @@ autominer - an autoswitching miner for linux, version $release::number
 
 usage: autominer mine [options]
 
- --help                 print this help text
- --version              print the version number, exit
- --verbose              print commands as they are run
- --quiet                dont echo output from the miner to stdout
+ --help                    print this help text
+ --version                 print the version number, exit
+ --verbose                 print commands as they are run
+ --quiet                   dont echo output from the miner to stdout
 
 required
- --username <addr>      where to send rewards
- --cards <device-ids>   comma-separated list of devices ids to mine with
- --data-dir <path>      base location for perf, history and market data
+ --payout-address <addr>   where to send mining rewards
+ --cards <device-ids>      comma-separated list of devices ids to mine with
+ --data-dir <path>         base location for perf, history and market data
+
+required - at least one
+ --nicehash-usa            consider mining on nicehash.usa algorithms
+ --nicehash-eu             consider mining on nicehash.eu algorithms
 
 optional
- --profile <name>       separate config file, perf and history data
- --period <seconds>     how frequently to re-evaluate what to mine
- --retention <number>   number of per-period sessions to retain
- --samples <seconds>    number of trailing perf samples to estimate future performance from
+ --profile <name>          separate config file, perf and history data
+ --worker <name>           name of this mining rig / worker - part of the username mining parameter
+ --period <seconds>        how frequently to re-evaluate what to mine
+ --retention <number>      number of per-period sessions to retain
+ --samples <seconds>       number of trailing perf samples to estimate future performance from
+
+optional - miner executables
+ --ccminer-path <path>              path to the ccminer executable
+ --ccminer-cryptonight-path <path>  path to the ccminer-cryptonight executable
+ --ethminer-path <path>             path to the ethminer executable
+ --nheqminer-cuda-path <path>       path to the nheqminer_cuda executable
+ --sgminer-path <path>              path to the sgminer executable
 
 For more information visit https://github.com/hossbeast/autominer
 HELP
@@ -96,19 +126,26 @@ if($opts{version})
   exit 0;
 }
 
-die "missing required config --username" unless $opts{username};
+die "missing required config --payout-address" unless $opts{payout_address};
 die "missing required config --data-dir" unless $opts{datadir};
 die "missing required config --cards" unless defined $opts{"comma-cards"};
+die "missing required config --nicehash-usa or --nicehash-eu" unless $opts{"nicehash-usa"} or $opts{"nicehash-eu"};
 
-printf("parameters\n");
-printf("%20s %s\n", "username", $opts{username});
-printf("%20s %s\n", "profile", $opts{profile});
-printf("%20s %s\n", "data-dir", $opts{datadir});
-printf("%20s %s\n", "cards", $opts{"comma-cards"});
-printf("%20s %s\n", "evaluation period", $opts{period});
-printf("%20s %s\n", "samples", $opts{samples});
-printf("%20s %s\n", "window", $opts{window});
-printf("%20s %s\n", "retention", $opts{retention});
+if($verbose)
+{
+  printf("parameters\n");
+  printf("%20s %s\n", "profile", $opts{profile});
+  printf("%20s %s\n", "data-dir", $opts{datadir});
+  printf("%20s %s\n", "payout-address", $opts{payout_address});
+  printf("%20s %s\n", "worker", $opts{worker});
+  printf("%20s %s\n", "cards", $opts{"comma-cards"});
+  printf("%20s %s\n", "evaluation period", $opts{period});
+  printf("%20s %s\n", "samples", $opts{samples});
+  printf("%20s %s\n", "window", $opts{window});
+  printf("%20s %s\n", "retention", $opts{retention});
+  printf("%20s %s\n", "nicehash-usa", $opts{"nicehash-usa"} ? "yes" : "no");
+  printf("%20s %s\n", "nicehash-eu", $opts{"nicehash-eu"} ? "yes" : "no");
+}
 
 $SIG{CHLD} = 'IGNORE';
 
@@ -134,8 +171,6 @@ for my $miner (values %miners)
   for my $algo (values %{$$miner{algos}})
   {
     mkdirp("$opts{datadir}/bench/$opts{profile}/$$miner{name}/$$algo{name}");
-
-    # setup a perf filter
     perf_readdir($miner, $algo, "$opts{datadir}/bench/$opts{profile}");
   }
 }
@@ -164,6 +199,7 @@ my $preprocess = sub {
 chdir($history_dir) or die "chdir($history_dir) : $!";
 finddepth({ wanted => $wanted, preprocess => $preprocess }, ".");
 
+my $mining_market = '';
 my $mining_miner = '';
 my $mining_algo = '';
 
@@ -195,9 +231,9 @@ my ($autominer_reader_fd, $autominer_writer_fd) = POSIX::pipe();
 
 sub getrates
 {
-  my $window = shift;
+  my ($market, $window) = @_;
 
-  my $path = "$opts{datadir}/rates/nicehash/$window";
+  my $path = "$opts{datadir}/rates/$market/$window";
   open(my $fh, "<$path") or die "open($path) : $!";
   my $text = do { local $/ = undef ; <$fh> };
   close $fh;
@@ -205,10 +241,36 @@ sub getrates
   decode_json($text);
 }
 
-my $rates = getrates($opts{window});
+my %rates;
+$rates{"nicehash-usa"} = getrates("nicehash-usa", $opts{window}) if $opts{"nicehash-usa"};
+$rates{"nicehash-eu"} = getrates("nicehash-eu", $opts{window}) if $opts{"nicehash-eu"};
+
 while(1)
 {
-  my @options = profitability(\%miners, $rates);
+  # evaluate mining options
+  my @options;
+  for my $market ("nicehash-usa", "nicehash-eu")
+  {
+    next unless $opts{$market};
+
+    while(my($minername, $miner) = each %miners)
+    {
+      while(my($algoname, $algo) = each %{$$miner{algos}})
+      {
+        my $rate = $rates{$market}{$algoname};
+        next unless $rates{$market}{$algoname};
+
+        push @options, {
+            miner => $miner
+          , algo => $algo
+          , market => $market
+          , rate => $rates{$market}{$algoname}
+          , profit => $$algo{speed} * $rates{$market}{$algoname}
+        };
+      }
+    }
+  }
+
   @options = sort { $$b{profit} <=> $$a{profit} } @options;
   my $option = $options[0];
 
@@ -219,7 +281,8 @@ while(1)
       $profit = sprintf("%14.8f", $$option{profit});
     }
 
-    printf "miner %-20s algo %-20s rate %14.8f * speed %14.8f = profit %-10s\n"
+    printf "market %-15s miner %-20s algo %-20s rate %14.8f * speed %14.8f = profit %-10s\n"
+      , $$option{market}
       , $$option{miner}{name}
       , $$option{algo}{name}
       , $$option{rate}
@@ -228,6 +291,7 @@ while(1)
     ;
   }
 
+  my $market = $$option{market};
   my $miner = $$option{miner};
   my $algo = $$option{algo};
 
@@ -239,10 +303,11 @@ while(1)
   open(my $bench_fh, ">$bench_path") or die "open($bench_path) : $!";
 
   # the header line contains details about the selected option
-  my $perf_header = sprintf("%-10s %s/%s %3s %14.8f * %14.8f = %14.8f\n\n"
+  my $perf_header = sprintf("%-10s %12u %15s %30s %3s %14.8f * %14.8f = %14.8f\n\n"
     , $release::number
-    , $$miner{name}
-    , $$algo{name}
+    , time()
+    , $market
+    , "$$miner{name}/$$algo{name}"
     , $opts{window}
     , $$algo{speed}
     , $$option{rate}
@@ -260,9 +325,9 @@ while(1)
     $history_min_file++;
   }
 
-  if(!$miner_pid || !$perf_pid || $$miner{name} ne $mining_miner || $$algo{name} ne $mining_algo)
+  if(!$miner_pid || !$perf_pid || $market ne $mining_market || $$miner{name} ne $mining_miner || $$algo{name} ne $mining_algo)
   {
-    miner_env_setup($miner, $algo);
+    miner_env_setup(market => $market, miner => $$miner{name}, algo => $$algo{name});
 
     # miner writes to autominer
     killfast([ \$miner_pid, \$perf_pid ]);
@@ -290,6 +355,7 @@ while(1)
       exec { $cmd[0] } @cmd;
     }
 
+    $mining_market = $market;
     $mining_miner = $$miner{name};
     $mining_algo = $$algo{name};
   }
@@ -338,7 +404,7 @@ while(1)
         chomp $line;
 
         # get the most current rates
-        $s30 = getrates("s30") if not defined $s30;
+        $s30 = getrates($market, "s30") if not defined $s30;
         my $record = sprintf("%s %14.8f\n", $line, $$s30{$$algo{name}});
         syswrite($bench_fh, $record, length($record));
 
@@ -354,6 +420,6 @@ while(1)
   perf_endfile($miner, $algo, $algo_bench_dir, $bench_file_num);
   perf_update($miner, $algo);
 
-  $rates = $s30 if $opts{window} eq "s30";
-  $rates = getrates($opts{window}) if $opts{window} ne "s30";
+  $rates{$market} = $s30;
+  $rates{$market} = getrates($market, $opts{window}) if not $s30 or $opts{window} ne "s30";
 }
