@@ -90,56 +90,92 @@ sub pr_set_pdeathsig
 sub curl
 {
   my $url = shift;
+  my %params = @_;
 
-  my($rh, $wh);
-  pipe($rh, $wh) or die $!;
+  my $query = '';
+  while(my($k, $v) = each %params)
+  {
+    $query .= "&" if $query;
+    $query .= "?" if not $query;
+
+    $query .= $k;
+    $query .= "=";
+    $query .= $v;
+  }
+
+  my($read_fd, $write_fd) = POSIX::pipe() or die;
   my $pid = fork;
   if(!$pid)
   {
-    close $rh;
+    POSIX::close($read_fd);
 
+    open(my $wh, "<&=$write_fd") or die;
     my $flags = fcntl $wh, F_GETFD, 0 or die $!;
     fcntl $wh, F_SETFD, $flags &= ~FD_CLOEXEC or die $!;
 
     my @cmd = (
         "curl"
-      , $url
+      , "${url}${query}"
       , "-s"
-      , "-o", "/dev/fd/" . fileno($wh)
+      , "-o", "/dev/fd/$write_fd" # . fileno($wh)
     );
 
+    print STDERR (" > @cmd\n") if $::verbose;
     exec { $cmd[0] } @cmd;
   }
 
-  close $wh;
-  wait or die "wait : $!";
-  do { local $/ = undef ; <$rh> }
+  POSIX::close($write_fd) or die $!;
+
+  my $output = '';
+  while(1)
+  {
+    my $data;
+    my $r = POSIX::read($read_fd, $data, 0xffff);
+    die "read($read_fd) : $!" unless defined $r;
+    last if $r == 0;
+    $output .= $data;
+  }
+
+  chomp $output if $output;
+  POSIX::close($read_fd) or die $!;
+
+  $output
 }
 
 sub run
 {
   my @cmd = @_;
-  print(" > @cmd\n") if $::verbose;
+  print STDERR (" > @cmd\n") if $::verbose;
 
-  my($rh, $wh);
-  pipe($rh, $wh) or die $!;
+  my($read_fd, $write_fd) = POSIX::pipe() or die;
   my $pid = fork;
   if(!$pid)
   {
-    close $rh;
+    POSIX::close($read_fd);
+
     open(STDIN, "</dev/null");
-    open(STDOUT, ">&=" . fileno($wh)) or die;
+    open(STDOUT, ">&=$write_fd") or die;
     chdir("/") or die;
 
     exec { $cmd[0] } @cmd;
   }
 
-  close $wh;
-  wait or die "wait : $!";
-  my $output = do { local $/ = undef ; <$rh> };
-  close $rh;
+  POSIX::close($write_fd) or die $!;
 
-  $output;
+  my $output = '';
+  while(1)
+  {
+    my $data;
+    my $r = POSIX::read($read_fd, $data, 0xffff);
+    die "read($read_fd) : $!" unless defined $r;
+    last if $r == 0;
+    $output .= $data;
+  }
+
+  chomp $output if $output;
+  POSIX::close($read_fd) or die $!;
+
+  $output
 }
 
 sub filter

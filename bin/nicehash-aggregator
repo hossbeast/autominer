@@ -29,11 +29,11 @@ use release;
 override_warn_and_die();
 
 use Time::Piece;
+use Data::Dumper;
 use JSON::XS;
 use File::Find;
 use config;
 use market::nicehash;
-use profitability;
 
 our $verbose = 0;
 our %opts = (
@@ -49,7 +49,8 @@ my %optargs = (
   , 'profile=s'     => \$opts{profile}
   , 'period=i'      => \$opts{period}
   , 'retention=i'   => \$opts{retention}
-  , 'data-dir=s'    => \$opts{"datadir"}
+  , 'data-dir=s'    => \$opts{datadir}
+  , 'region=s'      => \$opts{region}
 );
 configure(\%optargs, \%opts);
 
@@ -67,6 +68,7 @@ usage: nicehash-aggregator [options]
  --verbose              print commands as they are run
 
 required
+ --region usa|eu        nicehash region (nicehash calls this a location)
  --data-dir <path>
 
 optional
@@ -82,10 +84,11 @@ if($opts{version})
   exit 0;
 }
 
-my $basedir = "$opts{datadir}/rates";
-my $ratesdir = "$basedir/nicehash";
-my $spooldir = "$ratesdir/spool";
-my $samplesdir = "$ratesdir/samples";
+die "missing required config --region" unless $opts{region};
+die "unknown region $opts{region}" unless $opts{region} =~ /usa|eu/;
+
+$SIG{CHLD} = 'IGNORE';
+
 my $min_file;
 my $max_file = 0;
 my %slices;         # {m1} => [ { algo => price, algo => price } ] 
@@ -94,13 +97,19 @@ my $num = 0;
 my $report = 0;
 my $writer = JSON::XS->new->pretty(1);
 
-mkdirp($basedir);
+my $ratesdir = "$opts{datadir}/rates";
 mkdirp($ratesdir);
+
+$ratesdir .= "/nicehash-$opts{region}";
+mkdirp($ratesdir);
+
+my $spooldir = "$ratesdir/spool";
 mkdirp($spooldir);
+
+my $samplesdir = "$ratesdir/samples";
 mkdirp($samplesdir);
 
-my $stats_global_current = nicehash::stats_global_current();
-for my $algo (keys %$stats_global_current)
+for my $algo (keys %nicehash::algos)
 {
   for my $win (qw|s30 m1 m5 m10 h1 h3|)
   {
@@ -186,11 +195,6 @@ sub process
 
   return unless $report;
 
-  if(($num % 1) == 0)
-  {
-    printf("%s : %d samples\n", scalar localtime, $max_file - $min_file);
-  }
-
   open($fh, ">$spooldir/s30") or die $!;
   print $fh ($writer->encode($slices{s30}[0]));
   close $fh;
@@ -237,19 +241,41 @@ finddepth({ wanted => $wanted, preprocess => $preprocess }, ".");
 
 $report = 1;
 
+my $stats = {};
+my $T;
+
+# block until successfully querying each algorithm
+while(1)
+{
+  $T = time();
+  last if nicehash::orders_summarize($opts{region}, $stats);
+  sleep 30;
+}
+
 for(my $i = 0; 1; $i++)
 {
-  my $T = $^T;
+  my $samples = 0;
+  $samples = $max_file - $min_file if $min_file;
+
+  printf("%s : summarized orders for %s over %d seconds : %d samples\n"
+    , scalar localtime
+    , $opts{region}
+    , time() - $T
+    , $samples
+  );
 
   $max_file++;
   open(my $fh, sprintf(">$samplesdir/%05u", $max_file)) or die $!;
-  print $fh ($writer->encode($stats_global_current));
+  print $fh ($writer->encode($stats));
   close $fh;
 
   process($samplesdir, $max_file);
 
-  sleep(30 - ($^T - $T));
+  # wait for the api to refresh
+  my $remaining = 30 - (time() - $T);
+  $remaining = 30 if $remaining < 2;
+  sleep($remaining);
 
-  my $stats_next = nicehash::stats_global_current();
-  $stats_global_current = $stats_next if $stats_next;
+  $T = time();
+  nicehash::orders_summarize($opts{region}, $stats);
 }
