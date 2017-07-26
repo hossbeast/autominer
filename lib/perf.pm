@@ -23,12 +23,13 @@ use warnings;
 
 require Exporter;
 our @ISA = qw|Exporter|;
-our @EXPORT = qw|perf_readdir perf_startfile perf_readline perf_update perf_endfile|;
+our @EXPORT = qw|perf_readdir perf_startfile perf_readline perf_update perf_endfile perf_initialize|;
 
 use Data::Dumper;
 use File::Find;
 
 use util;
+use xlinux;
 
 sub normalize_hashrate
 {
@@ -73,16 +74,23 @@ sub perf_readline
 {
   my ($miner, $algo, $line) = @_;
 
-  # time-offset speed units
-  if($line !~ /([0-9]+) ([0-9.]+) (k|m|g|t|p)? ?(h|s)\/s/i)
+  my $re = qr/
+       ([0-9]+)        # 1 time-offset
+    \s+([0-9.]+)       # 2 speed
+    \s+(k|m|g|t|p)?    # 3 units
+    \s*(?:h|s)\/s
+  /xi;
+
+  if($line !~ $re)
   {
-#    print "malformed $$miner{name}/$$algo{name} perf record $line\n";
+    print "malformed $$miner{name}/$$algo{name} perf record '$line'\n" if $::verbose;
   }
   else
   {
     my $time = int($1);
     my $rate = normalize_hashrate($2, $3);
 
+    # one record per second
     while($$algo{perf_time_base} < $time)
     {
       unshift @{$$algo{perf}}, $rate;
@@ -93,14 +101,16 @@ sub perf_readline
 
 sub perf_update
 {
-  my ($miner, $algo) = @_;
+  my ($miner, $algo, $benchdir) = @_;
 
+  # re-calculate algo speed
   my $speed = 0xFFFFFFFF;
   if(@{$$algo{perf}})
   {
     $speed = 0;
+
     my $x;
-    for($x = 0; $x <= $#{$$algo{perf}} && $x < $::opts{samples}; $x++)
+    for($x = 0; $x <= $#{$$algo{perf}}; $x++)
     {
       $speed += $$algo{perf}[$x];
     }
@@ -108,6 +118,7 @@ sub perf_update
     $speed /= $x;
   }
 
+  # report
   printf("%35s", sprintf("%s/%s", $$miner{name}, $$algo{name}));
   if($$algo{speed} == 0xffffffff) {
     printf("%14s", "(no data)");
@@ -134,20 +145,26 @@ sub perf_update
 
 sub perf_endfile
 {
-  my ($miner, $algo, $dir, $num) = @_;
+  my ($miner, $algo, $benchdir, $num) = @_;
+
+  my $dir = "$benchdir/$$miner{name}/$$algo{name}";
 
   # discard aged out perf records
   $#{$$algo{perf}} = $::opts{samples} if $#{$$algo{perf}} > $::opts{samples};
 
   # remove the file if it has now aged out
-  $$algo{min_file} = $num unless defined $$algo{min_file};
-  $$algo{max_file} = $num;
+  $$algo{tail} = $num unless defined $$algo{tail};
+  $$algo{head} = $num;
 
-  if(($$algo{max_file} - $$algo{min_file}) >= $::opts{retention})
+  if(ring_sub($$algo{head}, $$algo{tail}, 0xffff) >= $::opts{retention})
   {
-    unlink sprintf("%s/%05u", $dir, $$algo{min_file});
-    $$algo{min_file}++;
+    uxunlink(sprintf("%s/%05u", $dir, $$algo{tail}));
+    $$algo{tail} = ring_add($$algo{tail}, 1, 0xffff);
   }
+
+  # update the symlinks for the perf series
+  symlinkf(sprintf("%05u", $$algo{tail}), "$dir/tail");
+  symlinkf(sprintf("%05u", $$algo{head}), "$dir/head");
 }
 
 #
@@ -189,4 +206,57 @@ sub perf_readdir
   }
 
   perf_update($miner, $algo);
+}
+
+sub perf_initialize
+{
+  my ($miner, $algo, $benchdir) = @_;
+
+  my $dir = "$benchdir/$$miner{name}/$$algo{name}";
+  mkdirp($dir);
+
+  # initialize bounds from the links
+  my $head = readlink("$dir/head");
+  $$algo{head} = int($head) if $head;
+
+  my $tail = readlink("$dir/tail");
+  $$algo{tail} = int($tail) if $tail;
+
+  $$algo{perf_time_base} = 0;
+
+  if(defined($$algo{tail}) and defined($$algo{head}))
+  {
+    # prune history files outside the retention window
+    while(ring_sub($$algo{head}, $$algo{tail}, 0xffff) > $::opts{retention})
+    {
+      uxunlink(sprintf("%s/%05u", $dir, $$algo{tail}));
+      $$algo{tail} = ring_add($$algo{tail}, 1, 0xffff);
+    }
+
+    # load history files within the samples window
+    my $x = $$algo{tail};
+    if(ring_sub($$algo{head}, $$algo{tail}, 0xffff) > $::opts{samples})
+    {
+      $x = ring_sub($$algo{head}, $::opts{samples}, 0xffff);
+    }
+    while(1)
+    {
+      if((my $fh = uxopen(sprintf("<%s/%05u", $dir, $x))))
+      {
+        # discard the header
+        my $line = <$fh>; $line = <$fh>;
+        while($line = <$fh>)
+        {
+          chomp $line;
+          perf_readline($miner, $algo, $line);
+        }
+        close $fh;
+      }
+
+      last if $x == $$algo{head};
+      $x = ring_add($x, 1, 0xffff);
+    }
+  }
+
+  perf_update($miner, $algo, $benchdir);
 }

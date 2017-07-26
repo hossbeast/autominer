@@ -34,6 +34,7 @@ use JSON::XS;
 use File::Find;
 use config;
 use market::nicehash;
+use xlinux;
 
 our $verbose = 0;
 our %opts = (

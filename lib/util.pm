@@ -23,7 +23,10 @@ use warnings;
 
 require Exporter;
 our @ISA = qw|Exporter|;
-our @EXPORT = qw|run killfast curl filter pr_set_pdeathsig override_warn_and_die mkdirp|;
+our @EXPORT = (
+    qw|run killfast curl filter override_warn_and_die|
+  , qw|ring_sub ring_add|
+);
 
 use File::Temp;
 use Errno ':POSIX';
@@ -32,6 +35,8 @@ use Fcntl 'SEEK_SET';
 use POSIX;
 use MIME::Base64;
 use Data::Dumper;
+
+use xlinux;
 
 sub override_warn_and_die
 {
@@ -67,24 +72,6 @@ sub killfast
   {
     kill 9, $$pidref if $$pidref;
   }
-}
-
-sub pr_set_pdeathsig
-{
-  my $sig = shift;
-
-  return unless $^O eq 'linux';
-
-  my(undef, undef, undef, undef, $machine) = POSIX::uname();
-  my $SYS_prctl = undef;
-  $SYS_prctl = 157 if $machine eq "x86_64";
-  $SYS_prctl = 172 if $machine =~ /^i[3456]86$/;
-
-  return unless $SYS_prctl;
-
-  my $PR_SET_PDEATHSIG = 1;   # at least it is on my machine
-
-  syscall($SYS_prctl, $PR_SET_PDEATHSIG, $sig) >= 0 or die $!;
 }
 
 sub curl
@@ -227,11 +214,18 @@ sub filter
   $output;
 }
 
-sub mkdirp
+sub ring_add
 {
-  return if mkdir $_[0];
-  return if $!{EEXIST};
-  die "mkdir($_[0]) : $!"
+  my ($a, $b, $ring) = @_;
+
+  ($a + $b) % $ring
+}
+
+sub ring_sub
+{
+  my ($a, $b, $ring) = @_;
+
+  ($a - $b) % $ring
 }
 
 1

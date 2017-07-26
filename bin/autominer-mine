@@ -32,10 +32,10 @@ use Time::Piece;
 use Data::Dumper;
 use JSON::XS;
 use POSIX ':sys_wait_h';
-use File::Find;
 use config;
 use miner;
 use perf;
+use xlinux;
 
 our $verbose = 0;
 our %opts = (
@@ -94,13 +94,13 @@ usage: autominer mine [options]
  --quiet                   dont echo output from the miner to stdout
 
 required
- --payout-address <addr>   where to send mining rewards
+ --payout-address <addr>   where to send mining rewards - part of the username mining parameter
  --cards <device-ids>      comma-separated list of devices ids to mine with
  --data-dir <path>         base location for perf, history and market data
 
 required - at least one
- --nicehash-usa            consider mining on nicehash.usa algorithms
- --nicehash-eu             consider mining on nicehash.eu algorithms
+ --nicehash-usa            consider mining on algos in nicehash.usa
+ --nicehash-eu             consider mining on algos in nicehash.eu
 
 optional
  --profile <name>          separate config file, perf and history data
@@ -156,6 +156,8 @@ mkdirp("$opts{datadir}/bench/$opts{profile}");
 mkdirp("$opts{datadir}/history");
 mkdirp("$opts{datadir}/history/$opts{profile}");
 
+my $benchdir = "$opts{datadir}/bench/$opts{profile}";
+
 # load miners
 my %miners = enumerate_miners("$repodir/miners");
 die "no miners" unless %miners;
@@ -167,37 +169,24 @@ for my $miner (values %miners)
 
   mkdirp("$opts{datadir}/bench/$opts{profile}/$$miner{name}");
 
-  # load benchmark data per algo
+  # load perf data per algo
   for my $algo (values %{$$miner{algos}})
   {
-    mkdirp("$opts{datadir}/bench/$opts{profile}/$$miner{name}/$$algo{name}");
-    perf_readdir($miner, $algo, "$opts{datadir}/bench/$opts{profile}");
+    perf_initialize($miner, $algo, $benchdir);
   }
 }
 
 # initialize history files
 my $history_dir = "$opts{datadir}/history/$opts{profile}";
-my $history_min_file = 0;
-my $history_max_file = 0;
-my $wanted = sub {
-  return if $_ eq "." or $_ eq "..";
+my $history_head = int(readlink("$history_dir/head") || 0);
+my $history_tail = int(readlink("$history_dir/tail") || 0);
 
-  my $num = int($_);
-  $history_max_file = $num;
-  $history_min_file = $num unless defined $history_min_file;
-
-  if(($history_max_file - $history_min_file) >= $::opts{retention})
-  {
-    unlink sprintf("%s/%05u", $history_dir, $history_min_file);
-    $history_min_file++;
-  }
-};
-my $preprocess = sub {
-  sort { int($a) <=> int($b) } # increasing order
-  grep { /^[0-9]+$/ } @_
-};
-chdir($history_dir) or die "chdir($history_dir) : $!";
-finddepth({ wanted => $wanted, preprocess => $preprocess }, ".");
+# prune history files outside the retention window
+while(ring_sub($history_head, $history_tail, 0xffff) > $::opts{retention})
+{
+  uxunlink(sprintf("%s/%05u", $history_dir, $history_tail));
+  $history_tail = ring_add($history_tail, 1, 0xffff);
+}
 
 my $mining_market = '';
 my $mining_miner = '';
@@ -298,7 +287,7 @@ while(1)
   # open a new bench file to store the results of this run
   my $miner_bench_dir = "$opts{datadir}/bench/$opts{profile}/$$miner{name}";
   my $algo_bench_dir = "$miner_bench_dir/$$algo{name}";
-  my $bench_file_num = ($$algo{max_file} || 0) + 1;
+  my $bench_file_num = ($$algo{head} || 0) + 1;
   my $bench_path = sprintf("%s/%05u", $algo_bench_dir, $bench_file_num);
   open(my $bench_fh, ">$bench_path") or die "open($bench_path) : $!";
 
@@ -316,13 +305,15 @@ while(1)
   syswrite($bench_fh, $perf_header, length($perf_header));
 
   # advance the history files
-  my $history_file_num = ++$history_max_file;
-  my $history_path = sprintf("%s/%05u", $history_dir, $history_file_num);
-  symlink($bench_path, $history_path) or die "symlink($bench_path, $history_path) : $!";
-  if(($history_max_file - $history_min_file) >= $::opts{retention})
+  $history_head = ring_add($history_head, 1, 0xffff);
+  symlinkf($bench_path, sprintf("%s/%05u", $history_dir, $history_head));
+  symlinkf(sprintf("%05u", $history_head), "$history_dir/head");
+
+  if(ring_sub($history_head, $history_tail, 0xffff) >= $::opts{retention})
   {
-    unlink sprintf("%s/%05u", $history_dir, $history_min_file);
-    $history_min_file++;
+    uxunlink(sprintf("%s/%05u", $history_dir, $history_tail));
+    $history_tail = ring_add($history_tail, 1, 0xffff);
+    symlinkf(sprintf("%05u", $history_tail), "$history_dir/tail");
   }
 
   if(!$miner_pid || !$perf_pid || $market ne $mining_market || $$miner{name} ne $mining_miner || $$algo{name} ne $mining_algo)
@@ -417,8 +408,8 @@ while(1)
   }
 
   close($bench_fh);
-  perf_endfile($miner, $algo, $algo_bench_dir, $bench_file_num);
-  perf_update($miner, $algo);
+  perf_endfile($miner, $algo, $benchdir, $bench_file_num);
+  perf_update($miner, $algo, $benchdir);
 
   $rates{$market} = $s30;
   $rates{$market} = getrates($market, $opts{window}) if not $s30 or $opts{window} ne "s30";
