@@ -88,6 +88,18 @@ if($opts{version})
 die "missing required config --region" unless $opts{region};
 die "unknown region $opts{region}" unless $opts{region} =~ /usa|eu/;
 
+# obtain an exclusive lock for the region
+my $rundir = "/tmp/run";
+mkdirp($rundir);
+$rundir .= "/autominer";
+mkdirp($rundir);
+$rundir .= "/aggregator";
+mkdirp($rundir);
+
+my $pidfile = "$rundir/nicehash-$opts{region}";
+my $holder = lock_obtain($pidfile);
+die "[$$] $pidfile already locked by $holder" if $holder and $holder != $$;
+
 $SIG{CHLD} = 'IGNORE';
 
 my $min_file;

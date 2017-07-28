@@ -155,10 +155,12 @@ mkdirp("$opts{datadir}/bench");
 mkdirp("$opts{datadir}/bench/$opts{profile}");
 mkdirp("$opts{datadir}/history");
 mkdirp("$opts{datadir}/history/$opts{profile}");
-
-my $benchdir = "$opts{datadir}/bench/$opts{profile}";
+mkdirp("/tmp/run");
+mkdirp("/tmp/run/autominer");
+mkdirp("/tmp/run/autominer/aggregator");
 
 # load miners
+my $benchdir = "$opts{datadir}/bench/$opts{profile}";
 my %miners = enumerate_miners("$repodir/miners");
 die "no miners" unless %miners;
 
@@ -178,22 +180,31 @@ for my $miner (values %miners)
 
 # initialize history files
 my $history_dir = "$opts{datadir}/history/$opts{profile}";
-my $history_head = int(readlink("$history_dir/head") || 0);
-my $history_tail = int(readlink("$history_dir/tail") || 0);
+my $history_head = readlink("$history_dir/head");
+$history_head = int $history_head if $history_head;
+
+my $history_tail = readlink("$history_dir/tail");
+$history_tail = int $history_tail if $history_tail;
 
 # prune history files outside the retention window
-while(ring_sub($history_head, $history_tail, 0xffff) > $::opts{retention})
+if(defined $history_head and defined $history_tail)
 {
-  uxunlink(sprintf("%s/%05u", $history_dir, $history_tail));
-  $history_tail = ring_add($history_tail, 1, 0xffff);
+  while(ring_sub($history_head, $history_tail, 0xffff) > $::opts{retention})
+  {
+    uxunlink(sprintf("%s/%05u", $history_dir, $history_tail));
+    $history_tail = ring_add($history_tail, 1, 0xffff);
+  }
+  symlinkf(sprintf("%05u", $history_tail), "$history_dir/tail");
 }
 
+my $quit = 0;
 my $mining_market = '';
 my $mining_miner = '';
 my $mining_algo = '';
-
 my $miner_pid = 0;
 my $perf_pid = 0;
+my $nicehash_aggregator_eu_pid = 0;
+my $nicehash_aggregator_usa_pid = 0;
 
 $SIG{CHLD} = sub {
   local ($!, $?);
@@ -210,8 +221,49 @@ $SIG{CHLD} = sub {
       printf("CHLD perf-pid=$pid, status=$?, exit=$exit, signal=$sig\n");
       $perf_pid = 0;
     }
+    elsif($pid == $nicehash_aggregator_eu_pid)
+    {
+      printf("CHLD nicehash-aggregator-eu-pid=$pid, status=$?, exit=$exit, signal=$sig\n");
+      $nicehash_aggregator_eu_pid = 0;
+    }
+    elsif($pid == $nicehash_aggregator_usa_pid)
+    {
+      printf("CHLD nicehash-aggregator-usa-pid=$pid, status=$?, exit=$exit, signal=$sig\n");
+      $nicehash_aggregator_usa_pid = 0;
+    }
   }
 };
+
+$SIG{TERM} = $SIG{QUIT} = sub {
+  $quit = 1;
+};
+
+# spawn market aggregators if they are not already running
+for my $market ("usa", "eu")
+{
+  next unless $opts{"nicehash-$market"};
+
+  my $pid;
+  if(($pid = fork()) == 0)
+  {
+    my $holder = lock_obtain("/tmp/run/autominer/aggregator/nicehash-$market");
+    if($holder)
+    {
+      print("nicehash-aggregator --region $market already running : $holder\n") if $verbose;
+      exit;
+    }
+
+    chdir("/");
+    POSIX::close(0);
+    pr_set_pdeathsig(9);
+
+    my @cmd = ("$repodir/bin/nicehash-aggregator", "--region", "$market");
+    exec { $cmd[0] } @cmd;
+  }
+
+  $nicehash_aggregator_eu_pid = $pid if $market eq "eu";
+  $nicehash_aggregator_usa_pid = $pid if $market eq "usa";
+}
 
 # pipes are named according to which process writes to it
 my ($miner_reader_fd, $miner_writer_fd) = POSIX::pipe();
@@ -234,7 +286,7 @@ my %rates;
 $rates{"nicehash-usa"} = getrates("nicehash-usa", $opts{window}) if $opts{"nicehash-usa"};
 $rates{"nicehash-eu"} = getrates("nicehash-eu", $opts{window}) if $opts{"nicehash-eu"};
 
-while(1)
+while(!$quit)
 {
   # evaluate mining options
   my @options;
@@ -305,11 +357,17 @@ while(1)
   syswrite($bench_fh, $perf_header, length($perf_header));
 
   # advance the history files
+  $history_head = 0 unless $history_head;
   $history_head = ring_add($history_head, 1, 0xffff);
   symlinkf($bench_path, sprintf("%s/%05u", $history_dir, $history_head));
   symlinkf(sprintf("%05u", $history_head), "$history_dir/head");
 
-  if(ring_sub($history_head, $history_tail, 0xffff) >= $::opts{retention})
+  if(not defined $history_tail)
+  {
+    $history_tail = $history_head;
+    symlinkf(sprintf("%05u", $history_tail), "$history_dir/tail");
+  }
+  elsif(ring_sub($history_head, $history_tail, 0xffff) >= $::opts{retention})
   {
     uxunlink(sprintf("%s/%05u", $history_dir, $history_tail));
     $history_tail = ring_add($history_tail, 1, 0xffff);
@@ -414,3 +472,5 @@ while(1)
   $rates{$market} = $s30;
   $rates{$market} = getrates($market, $opts{window}) if not $s30 or $opts{window} ne "s30";
 }
+
+killfast([ \$miner_pid, \$perf_pid, \$nicehash_aggregator_eu_pid, \$nicehash_aggregator_usa_pid ]);

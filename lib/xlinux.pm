@@ -23,7 +23,7 @@ use warnings;
 
 require Exporter;
 our @ISA = qw|Exporter|;
-our @EXPORT = qw|mkdirp symlinkf uxopen uxunlink pr_set_pdeathsig|;
+our @EXPORT = qw|mkdirp symlinkf uxopen xunlink uxunlink pr_set_pdeathsig|;
 
 use Errno ':POSIX';
 use Fcntl;
@@ -37,6 +37,14 @@ sub mkdirp
   return if mkdir $path;
   return if $!{EEXIST};
   die "mkdir($path) : $!"
+}
+
+# fatal unlink
+sub xunlink
+{
+  my $path = shift;
+  return if unlink $path;
+  die "unlink($path) : $!";
 }
 
 # fatal unlink but only fail when errno != ENOENT

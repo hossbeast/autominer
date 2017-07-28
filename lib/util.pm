@@ -24,7 +24,7 @@ use warnings;
 require Exporter;
 our @ISA = qw|Exporter|;
 our @EXPORT = (
-    qw|run killfast curl filter override_warn_and_die|
+    qw|run killfast curl filter override_warn_and_die lock_obtain|
   , qw|ring_sub ring_add|
 );
 
@@ -226,6 +226,63 @@ sub ring_sub
   my ($a, $b, $ring) = @_;
 
   ($a - $b) % $ring
+}
+
+sub xopen
+{
+  my ($path, $mode) = @_;
+
+  my $r = POSIX::open($path, $mode);
+  return $r if $r && $r >= 0;
+  return -1 if $!{ENOENT};
+  return -1 if $!{EEXIST};
+  die "open($path) : $!";
+}
+
+sub obtain
+{
+  my $path = shift;
+
+  # create the pidfile
+  my $fd = xopen($path, O_CREAT | O_WRONLY | O_EXCL);
+
+  # success ; record our pid in the file
+  if($fd >= 0)
+  {
+    POSIX::write($fd, "$$\n", length("$$\n"));
+    POSIX::close($fd);
+    return 0;
+  }
+
+  # failure ; read the pid from the file
+  open(my $fh, "<$path") or die "open($path) : $!";
+  my $pid = <$fh>;
+  close $fh;
+
+  chomp $pid;
+  return int $pid;
+}
+
+# fatal obtain a lock by creating the specified file
+sub lock_obtain
+{
+  my $path = shift;
+
+  while(1)
+  {
+    my $pid = obtain($path);
+
+    # lock successfully obtained
+    last if $pid == 0;
+
+    # lock holder is still running
+    return $pid if kill 0, $pid;
+
+    # forcibly release the lock
+    xunlink($path);
+  }
+
+  return 0;
 }
 
 1
