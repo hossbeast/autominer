@@ -26,16 +26,15 @@ The autominer program expects to be executed from directory structure in this re
 
 # Getting Started
 
-Create a config file and supply your btc address as username
+Create a config file and supply your btc address as username. You must also
+minimally specify which nicehash region(s) to mine in.
 
 ````
+# create the config for the default profile
+#  set --payout-address
+#  set --nicehash-eu, and/or --nicehash-usa
 cp config/sample ~/.autominer/config
 vi ~/.autominer/config
-````
-
-Run the nicehash pricing aggregator
-````
-nicehash-aggregator
 ````
 
 Run autominer
@@ -47,11 +46,52 @@ There is no benchmarking phase. Autominer continuously monitors the performance 
 uses these data to determine which miner and algorithm to run. If a miner/algo combination has never
 been run, autominer will choose to run it.
 
+By default, autominer re-evaluates what to mine every 60 seconds.
+
 The first time you run autominer, you may choose to run quickly run every miner/algo combination to
-save time
+save time (though a longer benchmark period will be more accurate).
 
 ````
-autominer mine --period 30 # switch every 30 seconds
+autominer mine --period 30  # switch every 30 seconds
+````
+
+# Profiles
+
+You may wish to run multiple copies of autominer with different settings. For
+example, you may wish to run one instance of autominer on a dedicated mining
+GPU, and run another instance of autominer on a GPU which is disabled from time
+to time while using the GPU for something else.
+
+In this configuration, you may also want to supply the --worker parameter
+separately for each profile, so that you can distinguish the mining rewards for
+each card.
+
+````
+# create per-profile configs, set the --worker parameter
+cp ~/.autominer/config ~/.autominer/profile/card-zero/config
+vi ~/.autominer/profile/cardo-zero/config
+
+cp ~/.autominer/config ~/.autominer/profile/card-one/config
+vi ~/.autominer/profile/cardo-one/config
+````
+
+In addition, you may want to run the pricing aggregator separately from the
+autominer process, so that it is not disturbed when you stop/start autominer.
+
+If you don't run it separately, autominer-mine will run nicehash-aggregator for
+each region you're mining in, but it will be stopped when autominer-mine
+terminates.
+
+````
+nicehash-aggregator --region usa
+nicehash-aggregator --region eu
+````
+
+Finally, run autominer
+
+````
+autominer mine --profile card-zero
+autominer mine --profile card-one
 ````
 
 # Miners
