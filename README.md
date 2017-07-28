@@ -1,8 +1,9 @@
 # autominer
 
 autominer is a cryptocurrency mining application that selects the miner,
-algorithm, and market to mine in based on past performance of the miner and algo (hashrate) and current prices for that algo in the market in
-order to achieve the optimal mining strategy.
+algorithm, and market to mine in based on past performance of the miner and algo
+(hashrate) and current prices for that algo in the market in order to achieve
+the optimal mining strategy.
 
 currently supported,
 
@@ -18,7 +19,7 @@ currently supported,
 
 You need to obtain/install the miners separately in order to use autominer.
 
-# Installing
+# Installing Dependencies
 
 Install perl and curl if necessary (these come standard with every linux distro).
 
@@ -36,7 +37,8 @@ sudo pacman -S perl-json-xs
 sudo apt-get install libjson-xs-perl
 ````
 
-The autominer program expects to be executed from directory structure in this repository.
+The autominer program expects to be executed from the directory structure in
+this repository.
 
 # Getting Started
 
