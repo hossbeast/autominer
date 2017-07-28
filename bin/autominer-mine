@@ -283,11 +283,11 @@ sub getrates
 }
 
 my %rates;
-$rates{"nicehash-usa"} = getrates("nicehash-usa", $opts{window}) if $opts{"nicehash-usa"};
-$rates{"nicehash-eu"} = getrates("nicehash-eu", $opts{window}) if $opts{"nicehash-eu"};
-
 while(!$quit)
 {
+  $rates{"nicehash-usa"} = getrates("nicehash-usa", $opts{window}) if $opts{"nicehash-usa"};
+  $rates{"nicehash-eu"} = getrates("nicehash-eu", $opts{window}) if $opts{"nicehash-eu"};
+
   # evaluate mining options
   my @options;
   for my $market ("nicehash-usa", "nicehash-eu")
@@ -470,9 +470,6 @@ while(!$quit)
   close($bench_fh);
   perf_endfile($miner, $algo, $benchdir, $bench_file_num);
   perf_update($miner, $algo, $benchdir);
-
-  $rates{$market} = $s30;
-  $rates{$market} = getrates($market, $opts{window}) if not $s30 or $opts{window} ne "s30";
 }
 
 killfast([ \$miner_pid, \$perf_pid, \$nicehash_aggregator_eu_pid, \$nicehash_aggregator_usa_pid ]);
