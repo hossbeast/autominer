@@ -1,8 +1,22 @@
 # autominer
 
-autominer is a utility for cryptocurrency miners that selects the miner
-and algorithm to mine based on past performance and current market rates
-in order to achieve the optimal mining strategy.
+autominer is a cryptocurrency mining application that selects the miner,
+algorithm, and market to mine in based on past performance of the miner and algo (hashrate) and current prices for that algo in the market in
+order to achieve the optimal mining strategy.
+
+currently supported,
+
+## markets
+* nicehash
+
+## miners
+* ccminer (https://github.com/tpruvot/ccminer)
+* ccminer-cryptonight (https://github.com/KlausT/ccminer-cryptonight)
+* ethminer (https://github.com/Genoil/cpp-ethereum)
+* nheqminer_cuda (https://github.com/nicehash/nheqminer)
+* sgminer (https://github.com/nicehash/sgminer)
+
+You need to obtain/install the miners separately in order to use autominer.
 
 # Installing
 
@@ -116,6 +130,20 @@ $time is the number of seconds since the program started
 $hashes is a floating point number
 
 $units is one of k|m|g|t|p
+
+# Analysis
+
+To view statistics for current market prices, run
+
+````
+autominer rates --market usa
+````
+
+To view statistics for historical performance, including mining selections, run
+
+````
+autominer stats
+````
 
 # Dependencies
 
