@@ -430,6 +430,8 @@ while(!$quit)
       last;
     }
 
+    next unless $r > 0;
+
     # read from miner, write to perf, tee to stdout
     if(vec($rout, $miner_reader_fd, 1) == 1)
     {
