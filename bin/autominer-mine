@@ -39,8 +39,8 @@ use xlinux;
 
 our $verbose = 0;
 our %opts = (
-    'period'        => 60 * 1         # one minute
-  , 'window'        => 'm5'           # the trailing 5 minute average
+    'period'        => 60 * 6         # 6 minutes
+  , 'window'        => 'm5'           # trailing 5 minute average
   , 'retention'     => 10 * 24 * 30   # one month
   , 'samples'       => 60 * 10        # ten minutes
   , 'profile'       => 'default'
