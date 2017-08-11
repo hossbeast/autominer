@@ -1,19 +1,17 @@
-#!/bin/env perl
-
-# Copyright (c) 2017 Todd Freed <todd.freed@gmail.com>
-# 
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
+#
 # This file is part of autominer.
-# 
+#
 # autominer is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # autominer is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 
 package util;
@@ -24,8 +22,13 @@ use warnings;
 require Exporter;
 our @ISA = qw|Exporter|;
 our @EXPORT = (
-    qw|run killfast curl filter override_warn_and_die lock_obtain|
-  , qw|average|
+    qw|override_warn_and_die lock_obtain|
+  , qw|mkdirp symlinkf|
+  , qw|max min|
+  , qw|durationstring|
+  , qw|format_usd tojson|
+  , qw|variance average variance2|
+  , qw|try|
 );
 
 use File::Temp;
@@ -35,8 +38,12 @@ use Fcntl 'SEEK_SET';
 use POSIX;
 use MIME::Base64;
 use Data::Dumper;
+use Scalar::Util;
+use JSON::XS;
+use B;
 
 use xlinux;
+use logger;
 
 sub override_warn_and_die
 {
@@ -48,189 +55,21 @@ sub override_warn_and_die
   };
 }
 
-# presumes a SIGCHLD which zeroes the pidref
-sub killfast
+sub try(&@)
 {
-  my $pidrefs = shift;
+  my $code = \&{shift @_};
 
-  for my $pidref (@$pidrefs)
-  {
-    kill 15, $$pidref if $$pidref;
-  }
-
-  LOOP : while(1)
-  {
-    select undef, undef, undef, .01;
-    for my $pidref (@$pidrefs)
-    {
-      next LOOP if $$pidref;
-    }
-    last;
-  }
-
-  for my $pidref (@$pidrefs)
-  {
-    kill 9, $$pidref if $$pidref;
-  }
+  my $r = eval { $code->() };
+  return ($@, undef) if $@;
+  return (undef, $r)
 }
 
-sub curl
-{
-  my $url = shift;
-  my %params = @_;
-
-  my $query = '';
-  while(my($k, $v) = each %params)
-  {
-    $query .= "&" if $query;
-    $query .= "?" if not $query;
-
-    $query .= $k;
-    $query .= "=";
-    $query .= $v;
-  }
-
-  my($read_fd, $write_fd) = POSIX::pipe() or die;
-  my $pid = fork;
-  if(!$pid)
-  {
-    POSIX::close($read_fd);
-
-    open(my $wh, "<&=$write_fd") or die;
-    my $flags = fcntl $wh, F_GETFD, 0 or die $!;
-    fcntl $wh, F_SETFD, $flags &= ~FD_CLOEXEC or die $!;
-
-    my @cmd = (
-        "curl"
-      , "${url}${query}"
-      , "-s"
-      , "-o", "/dev/fd/$write_fd" # . fileno($wh)
-    );
-
-    print STDERR (" > @cmd\n") if $::verbose;
-    exec { $cmd[0] } @cmd;
-  }
-
-  POSIX::close($write_fd) or die $!;
-
-  my $output = '';
-  while(1)
-  {
-    my $data;
-    my $r = POSIX::read($read_fd, $data, 0xffff);
-    die "read($read_fd) : $!" unless defined $r;
-    last if $r == 0;
-    $output .= $data;
-  }
-
-  chomp $output if $output;
-  POSIX::close($read_fd) or die $!;
-
-  $output
-}
-
-sub run
-{
-  my @cmd = @_;
-  print STDERR (" > @cmd\n") if $::verbose;
-
-  my($read_fd, $write_fd) = POSIX::pipe() or die;
-  my $pid = fork;
-  if(!$pid)
-  {
-    POSIX::close($read_fd);
-
-    open(STDIN, "</dev/null");
-    open(STDOUT, ">&=$write_fd") or die;
-    chdir("/") or die;
-
-    exec { $cmd[0] } @cmd;
-  }
-
-  POSIX::close($write_fd) or die $!;
-
-  my $output = '';
-  while(1)
-  {
-    my $data;
-    my $r = POSIX::read($read_fd, $data, 0xffff);
-    die "read($read_fd) : $!" unless defined $r;
-    last if $r == 0;
-    $output .= $data;
-  }
-
-  chomp $output if $output;
-  POSIX::close($read_fd) or die $!;
-
-  $output
-}
-
-sub filter
-{
-  my ($cmd, $text) = @_;
-
-  my($in_reader, $in_writer) = POSIX::pipe() or die;
-  my($out_reader, $out_writer) = POSIX::pipe() or die;
-  my $pid = fork;
-  if($pid == 0)
-  {
-    POSIX::close($in_writer) or die;
-    POSIX::dup2($in_reader, 0) or die;
-    POSIX::close($in_reader) or die;
-
-    POSIX::close($out_reader) or die;
-    POSIX::dup2($out_writer, 1) or die;
-    POSIX::close($out_writer) or die;
-
-    pr_set_pdeathsig(9);
-
-    exec { $$cmd[0] } @$cmd;
-  }
-
-  print(" [$pid] @$cmd\n") if $::verbose;
-
-  POSIX::close($in_reader) or die;
-  POSIX::close($out_writer) or die;
-
-  if($text)
-  {
-    POSIX::write($in_writer, $text, length($text)) or die $!;
-  }
-  POSIX::close($in_writer) or die;
-
-  my $output = '';
-  while(1)
-  {
-    my $data;
-    my $r = POSIX::read($out_reader, $data, 0xffff);
-    die "read($out_reader) : $!" unless defined $r;
-    last if $r == 0;
-    $output .= $data;
-  }
-
-  chomp $output if $output;
-
-  POSIX::close($out_reader);
-  $output;
-}
-
-sub xopen
-{
-  my ($path, $mode) = @_;
-
-  my $r = POSIX::open($path, $mode);
-  return $r if $r && $r >= 0;
-  return -1 if $!{ENOENT};
-  return -1 if $!{EEXIST};
-  die "open($path) : $!";
-}
-
-sub obtain
+sub _try_obtain
 {
   my $path = shift;
 
   # create the pidfile
-  my $fd = xopen($path, O_CREAT | O_WRONLY | O_EXCL);
+  my $fd = uxopen($path, O_CREAT | O_WRONLY | O_EXCL);
 
   # success ; record our pid in the file
   if($fd >= 0)
@@ -245,8 +84,9 @@ sub obtain
   my $pid = <$fh>;
   close $fh;
 
-  chomp $pid;
-  return int $pid;
+  chomp $pid if $pid;
+  $pid = int $pid if $pid;
+  $pid
 }
 
 # fatal obtain a lock by creating the specified file
@@ -256,7 +96,7 @@ sub lock_obtain
 
   while(1)
   {
-    my $pid = obtain($path);
+    my $pid = _try_obtain($path);
 
     # lock successfully obtained
     last if $pid == 0;
@@ -271,6 +111,102 @@ sub lock_obtain
   return 0;
 }
 
+# fatal mkdir but only fail when errno != EEXIST
+sub mkdirp
+{
+  my $path = shift;
+
+  my $pfx = '/' if substr($path, 0, 1) eq '/';
+  my $s = '';
+  for my $part (split(/\/+/, $path))
+  {
+    next unless $part;
+    $s .= "/" if $s;
+    $s .= $part;
+    uxmkdir("/$s") if $pfx;
+    uxmkdir($s) if not $pfx;
+  }
+}
+
+# rm linkpath (but dont fail if linkpath doesnt exist), then fatal symlink(target, linkpath)
+sub symlinkf
+{
+  my ($target, $linkpath) = @_;
+
+  uxunlink($linkpath);
+  symlink($target, $linkpath) or die("symlink($target, $linkpath) : $!");
+}
+
+sub max
+{
+  ($_[0], $_[1])[$_[0] < $_[1]]
+}
+
+sub min
+{
+  ($_[0], $_[1])[$_[0] > $_[1]]
+}
+
+sub durationstring
+{
+  my $x = shift;
+  $x = int($x);
+
+  my $s = '';
+  my $days = int($x / (60 * 60 * 24));
+  $s .= "$days days " if $days;
+  $x -= ($days * (60 * 60 * 24));
+
+  my $hours = int($x / (60 * 60));
+  $s .= "$hours hours " if $hours;
+  $x -= ($hours * (60 * 60));
+
+  my $minutes = int($x / (60));
+  $s .= "$minutes minutes " if $minutes;
+  $x -= ($minutes * (60));
+
+  $s .= "$x seconds " if $x;
+
+  $s = substr($s, 0, -1) if $s;
+  $s;
+}
+
+sub format_usd
+{
+  my $x = shift;
+  my $in_x = $x;
+
+  my @p;
+  while(int($x) > 0)
+  {
+    my $n = $x / 1000;
+    push @p, sprintf("%03d", $x % 1000) if int($n);
+    push @p, sprintf("%d", $x % 1000) unless int($n);
+    $x = $n;
+  }
+
+  return '$' . join(",", reverse @p) if @p;
+  return '$0';
+}
+
+sub variance2
+{
+  my ($start, $end) = @_;
+
+  return 1 if !$start;
+
+  $end / $start
+}
+
+sub variance
+{
+  my ($start, $end) = @_;
+
+  return 1 if !$start;
+
+  ($end - $start) / $start
+}
+
 sub average
 {
   return 0 if $#_ == -1;
@@ -278,6 +214,140 @@ sub average
   my $total = 0;
   map { $total += $_ } @_;
   return $total / ($#_ + 1);
+}
+
+sub rest_prep
+{
+  my ($url, %params) = @_;
+
+  return {
+      url => $url
+    , params => \%params
+    , sleep => -1
+  };
+}
+
+sub rest_get
+{
+  my ($rest) = @_;
+
+  # 1, 3, 6, 11, 19, 32, 52
+  $$rest{sleep}++;
+  if($$rest{sleep})
+  {
+    sleep($$rest{sleep} + rand(3));
+    $$rest{sleep} = int($$rest{sleep} * 1.4);
+  }
+
+  my ($status, $text) = curl($$rest{url}, %{$$rest{params}});
+  if($status != 0)
+  {
+    logf("failed to get results");
+    return undef;
+  }
+
+  my ($error, $data) = try { decode_json($text) };
+  if($error)
+  {
+    logf("unable to interpret results");
+    logf(" $error");
+    logf(" $text");
+    return undef;
+  }
+
+  return $data
+}
+
+#
+# SUMMARY - tojson
+#  render a structure to json, like encode_json, but without exponential notation
+#
+# PARAMETERS
+#  o       - object to render
+#
+# internal  parameters
+#  k       - key
+#  v       - value
+#  lvl     - number of aggregates descended to this point
+#  pos     - position within the parent aggregate
+#  aligned - whether leading whitespace has already been emitted
+#
+sub tojson
+{
+  my ($o, $k, $v, $lvl, $pos, $aligned) = @_;
+
+  $lvl = 0 if not defined $lvl;
+  $pos = -1 if not defined $pos;
+
+  my $j = '';
+  unless($aligned)
+  {
+    $j .= '    ' x ($lvl - 1) if $lvl;
+    $j .= '  , ' if $pos > 0;
+    $j .= '    ' if $pos == 0;
+  }
+
+  my $ref = Scalar::Util::reftype($o);
+  if($k)
+  {
+    $j .= '"' . $k . '" : ';
+    $j .= tojson($v, undef, undef, $lvl, $pos, 1);
+  }
+  elsif($ref and $ref eq "HASH")
+  {
+    $j .= '{';
+    my @keys = sort keys %$o;
+    for(my $x = 0; $x <= $#keys; $x++)
+    {
+      $j .= "\n";
+      $j .= tojson(undef, $keys[$x], $$o{$keys[$x]}, $lvl + 1, $x);
+    }
+    $j .= "\n";
+    $j .= '    ' x ($lvl - 1) if $lvl;
+    $j .= '    ' if $pos >= 0;
+    $j .= '}';
+  }
+  elsif($ref and $ref eq "ARRAY")
+  {
+    $j .= '[';
+    for(my $x = 0; $x <= $#$o; $x++)
+    {
+      $j .= "\n";
+      $j .= tojson($$o[$x], undef, undef, $lvl + 1, $x);
+    }
+
+    $j .= "\n";
+    $j .= '    ' x ($lvl - 1) if $lvl;
+    $j .= '    ' if $pos >= 0;
+    $j .= ']';
+  }
+  elsif(not $ref and (B::svref_2object(\$o)->FLAGS & B::SVp_POK))
+  {
+    $j .= '"' . $o . '"';
+  }
+  elsif(not $ref)
+  {
+    if(not defined $o)
+    {
+      $j .= "null";
+    }
+    elsif($o =~ /\..+/)
+    {
+      $j .= sprintf("%18.16f", $o);
+    }
+    else
+    {
+      $j .= $o;
+    }
+  }
+
+  # some blessed perl bs
+  else
+  {
+    $j .= "null";
+  }
+
+  $j
 }
 
 1

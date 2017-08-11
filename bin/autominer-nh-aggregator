@@ -1,0 +1,319 @@
+#!/usr/bin/env perl
+
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
+#
+# This file is part of autominer.
+#
+# autominer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# autominer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+
+use strict;
+use warnings;
+
+use Cwd;
+use File::Basename;
+our $repodir;
+BEGIN { $repodir = dirname(Cwd::realpath("$0/..")) }
+use lib "$repodir/lib";
+override_warn_and_die();
+
+use Time::Piece;
+use JSON::XS;
+
+use child_commands;
+use child_manager;
+use config;
+use logger;
+use market::nicehash;
+use release;
+use ring;
+use util;
+use xlinux;
+
+our $verbose = 0;
+our %opts = (
+    'profile' => 'default'
+);
+my %optargs = (
+    'help|h'                          => \$opts{help}
+  , 'version|V'                       => \$opts{version}
+  , 'verbose|v'                       => \$opts{verbose}
+
+  # state
+  , 'cache-dir=s'                     => \$opts{"cache-dir"}
+  , 'run-dir=s'                       => \$opts{"run-dir"}
+
+  # basic setup
+  , 'profile=s'                       => \$opts{profile}
+
+  # nicehash
+  , 'nh-market-samples-retention=i'   => \$opts{"nh-market-samples-retention"}
+  , 'region=s'                        => \$opts{region}
+
+  # logging
+  , 'show-configuration!'  => \$opts{"show-configuration"}
+);
+configure(\%optargs, \%opts);
+
+if($opts{help})
+{
+  print <<HELP;
+autominer - an autoswitching miner for linux, version $release::number
+
+ >> BTC donations : 184AtMD3AihYke2bKQD9AXh4Dgzvtr7jhA (hossbeast)
+
+usage: autominer nh-aggregator [options]
+
+ --help      print this help text
+ --version   print the version number, exit
+ --verbose   print commands as they are run
+
+required
+ --cache-dir <path>             locate market pricing samples at <dir>
+ --run-dir <path>               base directory for process lockfiles
+ --region usa|eu                nicehash region (nicehash calls this a location)
+ --nh-market-samples-retention  number of 30s market samples to retain
+
+basic setup
+ --profile <name>    separate config file and history
+
+logging
+ --show-configuration   log parsing of configuration options
+
+For more information visit https://github.com/hossbeast/autominer
+HELP
+  exit 0
+}
+if($opts{version})
+{
+  print "autominer-$release::number\n";
+  exit 0;
+}
+
+die "missing required config --run-dir" unless $opts{"run-dir"};
+die "missing required config --cache-dir" unless $opts{"cache-dir"};
+die "missing required config --region" unless $opts{region};
+die "unknown region $opts{region}" unless $opts{region} =~ /^usa|eu$/;
+die "missing required config --nh-market-samples-retention" unless $opts{"nh-market-samples-retention"};
+
+# obtain an exclusive lock for the region
+my $rundir = sprintf("%s/autominer/aggregator", $opts{"run-dir"});
+mkdirp($rundir);
+
+my $pidfile = "$rundir/nh-$opts{region}";
+my $holder = lock_obtain($pidfile);
+die "[$$] $pidfile already locked by $holder" if $holder and $holder != $$;
+
+# delegate SIG{CHLD}
+child_manager_configure();
+
+my $head;
+my $tail;
+my %slices;         # {m1} => [ { algo => price, algo => price } ]
+my %sums;           # {m1}{algo} => sum
+my $ingestion_counter = 0;
+
+my $ratesdir = $opts{"cache-dir"} . "/nh-$opts{region}/rates";
+mkdirp("$ratesdir/spool");
+mkdirp("$ratesdir/samples");
+
+my $opportunitiesdir = $opts{"cache-dir"} . "/nh-$opts{region}/opportunities";
+mkdirp("$opportunitiesdir/spool");
+
+my $samplesdir = "$ratesdir/samples";
+mkdirp($samplesdir);
+
+for my $algo (keys %nicehash::algos)
+{
+  for my $win (qw|s30 m1 m5 m10 h1 h3|)
+  {
+    $slices{$win}[0]{$algo} = { };
+    $sums{$win}{$algo} = 0;
+  }
+}
+
+sub cycle
+{
+  my ($slice, $sum, $period, $capacity) = @_;
+
+  if($ingestion_counter && (($ingestion_counter % $period) == 0))
+  {
+    # shift off the oldest slice
+    if(($#$slice + 1) == $capacity)
+    {
+      while(my($algo, $price) = each %{$$slice[-1]})
+      {
+        $$sum{$algo} -= $price;
+      }
+
+      pop @$slice;
+    }
+
+    # accumulate into the newest slice
+    unshift @$slice, { };
+  }
+}
+
+sub cascade
+{
+  my ($slice, $sum, $next, $period) = @_;
+
+  if(($ingestion_counter % $period) == 0)
+  {
+    while(my($algo, $price) = each %{$$slice[0]})
+    {
+      $$sum{$algo} += $price;
+    }
+  }
+
+  # cascade
+  for my $algo (keys %{$$slice[0]})
+  {
+    $$next[0]{$algo} = $$sum{$algo} / ($#$slice + 1);
+  }
+}
+
+sub ingest_rates
+{
+  my $current = shift;
+
+  cycle($slices{s30}, $sums{s30}, 1                 , 2);   # 2x 30-second slices
+  cycle($slices{m1},  $sums{m1},  1 * 2             , 5);   # 5x  1-minute slices
+  cycle($slices{m5},  $sums{m5},  1 * 2 * 5         , 2);   # 2x  5-minute slices
+  cycle($slices{m10}, $sums{m10}, 1 * 2 * 5 * 2     , 6);   # 6x 10-minute slices
+  cycle($slices{h1},  $sums{h1},  1 * 2 * 5 * 2 * 6 , 3);   # 3x  1-hour slices
+
+  # apply the new prices to the current slice
+  $slices{s30}[0] = $current;
+
+  cascade($slices{s30}, $sums{s30}, $slices{m1} , 1                );
+  cascade($slices{m1} , $sums{m1} , $slices{m5} , 1 * 2            );
+  cascade($slices{m5} , $sums{m5} , $slices{m10}, 1 * 2 * 5        );
+  cascade($slices{m10}, $sums{m10}, $slices{h1} , 1 * 2 * 5 * 2    );
+  cascade($slices{h1} , $sums{h1} , $slices{h3} , 1 * 2 * 5 * 2 * 6);
+
+  $ingestion_counter++;
+}
+
+# initialize history bounds
+($head, $tail) = ring_init($samplesdir, $opts{"nh-market-samples-retention"});
+
+# prime samples from history
+if(defined($tail) and defined($head))
+{
+  my $buffer = 2 * 60 * 3;  # 3 hours worth
+
+  # load history files within the samples window
+  my $x = $tail;
+  if(ring_sub($head, $tail, 0xffff) > $buffer)
+  {
+    $x = ring_sub($head, $buffer, 0xffff);
+  }
+  while(1)
+  {
+    my $fh = xfhopen(sprintf("<$samplesdir/%05u", $x));
+    my $text = do { local $/ = undef ; <$fh> };
+    close $fh;
+
+    if($text)
+    {
+      my $current = decode_json($text);
+      ingest_rates($current);
+    }
+
+    last if $x == $head;
+    $x = ring_add($x, 1, 0xffff);
+  }
+}
+
+my $rates = {};
+my $opportunities = {};
+my $T;
+
+# block until successfully querying each algorithm
+while(1)
+{
+  $T = time();
+  last if nicehash::orders_summarize($opts{region}, $rates, $opportunities);
+  sleep 30;
+}
+
+while(1)
+{
+  my $samples = 0;
+  $samples = $head - $tail if $tail;
+
+  ingest_rates($rates);
+
+  # save current rates
+  my $fh = xfhopen(">$ratesdir/spool/s30") or die $!;
+  print $fh (tojson($slices{s30}[0]), "\n");
+  close $fh;
+  rename("$ratesdir/spool/s30", "$ratesdir/s30") or die $!;
+
+  $fh = xfhopen(">$ratesdir/spool/m1") or die $!;
+  print $fh (tojson($slices{m1}[0]), "\n");
+  close $fh;
+  rename("$ratesdir/spool/m1", "$ratesdir/m1") or die $!;
+
+  $fh = xfhopen(">$ratesdir/spool/m5") or die $!;
+  print $fh (tojson($slices{m5}[0]), "\n");
+  close $fh;
+  rename("$ratesdir/spool/m5", "$ratesdir/m5") or die $!;
+
+  $fh = xfhopen(">$ratesdir/spool/m10") or die $!;
+  print $fh (tojson($slices{m10}[0]), "\n");
+  close $fh;
+  rename("$ratesdir/spool/m10", "$ratesdir/m10") or die $!;
+
+  $fh = xfhopen(">$ratesdir/spool/h1") or die $!;
+  print $fh (tojson($slices{h1}[0]), "\n");
+  close $fh;
+  rename("$ratesdir/spool/h1", "$ratesdir/h1") or die $!;
+
+  $fh = xfhopen(">$ratesdir/spool/h3") or die $!;
+  print $fh (tojson($slices{h3}[0]), "\n");
+  close $fh;
+  rename("$ratesdir/spool/h3", "$ratesdir/h3") or die $!;
+
+  # save the current opportunities
+  $fh = xfhopen(">$opportunitiesdir/spool/present");
+  print $fh (tojson($opportunities), "\n");
+  close $fh;
+  rename("$opportunitiesdir/spool/present", "$opportunitiesdir/present");
+
+  # save historical rates
+  $head = 0 unless defined $head;
+  $head = ring_add($head, 1, 0xffff);
+  $tail = $head unless defined $tail;
+  $fh = xfhopen(sprintf(">$samplesdir/%05u", $head));
+  print $fh (tojson($rates), "\n");
+  close $fh;
+  symlinkf(sprintf("%05u", $head), "$samplesdir/head");
+
+  if(ring_sub($head, $tail, 0xffff) >= $opts{"nh-market-samples-retention"})
+  {
+    uxunlink(sprintf("%s/%05u", $samplesdir, $tail));
+    $tail = ring_add($tail, 1, 0xffff);
+  }
+  symlinkf(sprintf("%05u", $tail), "$samplesdir/tail");
+
+  logf("summarized orders for %s in %d seconds", $opts{region}, time() - $T);
+
+  # the api refreshes every 30s
+  my $remaining = 30 - (time() - $T);
+  $remaining = 30 if $remaining < 2;
+  sleep($remaining);
+
+  $T = time();
+  nicehash::orders_summarize($opts{region}, $rates, $opportunities);
+}

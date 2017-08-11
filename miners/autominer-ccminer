@@ -1,19 +1,19 @@
 #!/usr/bin/env perl
 
-# Copyright (c) 2017 Todd Freed <todd.freed@gmail.com>
-# 
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
+#
 # This file is part of autominer.
-# 
+#
 # autominer is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # autominer is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 
 #
@@ -50,6 +50,7 @@ elsif($ARGV[0] eq "algos")
       # known to not work well under ccminer
       next if $1 eq "cryptonight";
       next if $1 eq "decred";
+      next if $1 eq "equihash";
       next if $1 eq "qubit";
       next if $1 eq "scrypt";
       next if $1 eq "sia";
@@ -68,8 +69,9 @@ elsif($ARGV[0] eq "mine")
 
   my @cmd = (
       "$ENV{AUTOMINER_CCMINER_PATH}"
-    , "-o", "stratum+tcp://$ENV{AUTOMINER_ALGO}.$ENV{AUTOMINER_NICEHASH_REGION}.nicehash.com:$ENV{AUTOMINER_PORT}"
+    , "-o", "stratum+tcp://$ENV{AUTOMINER_URL_AUTHORITY}"
     , "-u", "$ENV{AUTOMINER_USERNAME}"
+    , "-p", "x"
     , "-a", "$ENV{AUTOMINER_ALGO}"
     , "-i", "$intensity"
   );
@@ -86,7 +88,7 @@ elsif($ARGV[0] eq "mine")
     push @cmd, "-d", $ENV{AUTOMINER_CARDS_COMMAS};
   }
 
-  print STDERR (" >> ccminer : @cmd\n");
+  print STDERR (" >> $$ : @cmd\n") if $ENV{AUTOMINER_VERBOSE};
 
   POSIX::dup2(1, 2) or die;
   exec { $cmd[0] } @cmd;

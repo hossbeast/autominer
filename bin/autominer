@@ -1,21 +1,23 @@
 #!/usr/bin/env perl
 
-# Copyright (c) 2017 Todd Freed <todd.freed@gmail.com>
-# 
+#
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
+#
 # This file is part of autominer.
-# 
+#
 # autominer is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # autominer is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 # along with autominer.  If not, see <http://www.gnu.org/licenses/>.
+#
 
 use strict;
 use warnings;
@@ -29,11 +31,11 @@ use util;
 use release;
 override_warn_and_die();
 
-my $mode;
+my $mode = 'mine';
 for(my $x = 0; $x <= $#ARGV; $x++)
 {
   my $param = $ARGV[$x];
-  if($param =~ /^stats|rates|mine$/)
+  if($param =~ /^(stats|nh-rates|mine|coinstats-aggregator|nh-aggregator|mph-aggregator)$/)
   {
     $mode = splice(@ARGV, $x, 1);
     last;
@@ -67,7 +69,7 @@ autominer - an autoswitching miner for linux, version $release::number
 
  >> BTC donations : 184AtMD3AihYke2bKQD9AXh4Dgzvtr7jhA (hossbeast)
 
-usage: autominer [stats|rates|mine] [options]
+usage: autominer <subcommand> [options]
 
  --help                 print this help text
  --version              print the version number, exit

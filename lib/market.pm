@@ -14,8 +14,38 @@
 #
 # You should have received a copy of the GNU General Public License
 
-package release;
+package market;
 
-our $number = "v1.2";
+use strict;
+use warnings;
+
+require Exporter;
+our @ISA = qw|Exporter|;
+our @EXPORT = (
+    qw|markets_load option_cmp|
+);
+
+use market::miningpoolhub;
+use market::nicehash;
+
+sub markets_load
+{
+  my %args = @_;
+
+  my @markets;
+  if($args{"nicehash-usa"})
+  {
+    push @markets, nicehash::new(region => 'usa', %args);
+  }
+  if($args{"nicehash-eu"})
+  {
+    push @markets, nicehash::new(region => 'eu', %args);
+  }
+  if($args{miningpoolhub})
+  {
+    push @markets, miningpoolhub::new(%args);
+  }
+  @markets;
+}
 
 1

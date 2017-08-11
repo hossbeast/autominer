@@ -1,19 +1,19 @@
 #!/usr/bin/env perl
 
-# Copyright (c) 2017 Todd Freed <todd.freed@gmail.com>
-# 
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
+#
 # This file is part of autominer.
-# 
+#
 # autominer is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # autominer is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 
 #
@@ -52,7 +52,7 @@ elsif($ARGV[0] eq "mine")
       "$ENV{AUTOMINER_SGMINER_PATH}"
     , "-T"
     , "-k", "$ENV{AUTOMINER_ALGO}"
-    , "-o", "stratum+tcp://$ENV{AUTOMINER_ALGO}.$ENV{AUTOMINER_NICEHASH_REGION}.nicehash.com:$ENV{AUTOMINER_PORT}"
+    , "-o", "stratum+tcp://$ENV{AUTOMINER_URL_AUTHORITY}"
     , "-u", "$ENV{AUTOMINER_USERNAME}"
     , "-p", "x"
     , "--intensity", "21"
@@ -71,7 +71,7 @@ elsif($ARGV[0] eq "mine")
   my $sgminer_dir = (map { chomp ; $_ } `which $ENV{AUTOMINER_SGMINER_PATH} | xargs realpath | xargs dirname`)[0];
   chdir($sgminer_dir) or die "chdir($sgminer_dir) : $!";
 
-  print(" >> sgminer : @cmd\n");
+  print STDERR (" >> $$ : @cmd\n") if $ENV{AUTOMINER_VERBOSE};
   exec { $cmd[0] } @cmd;
 }
 elsif($ARGV[0] eq "perf")

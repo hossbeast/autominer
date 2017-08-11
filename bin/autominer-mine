@@ -1,83 +1,135 @@
 #!/usr/bin/env perl
 
-# Copyright (c) 2017 Todd Freed <todd.freed@gmail.com>
-# 
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
+#
 # This file is part of autominer.
-# 
+#
 # autominer is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # autominer is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 
 use strict;
 use warnings;
 
-use File::Basename;
 use Cwd;
+use File::Basename;
 our $repodir;
 BEGIN { $repodir = dirname(Cwd::realpath("$0/..")) }
 use lib "$repodir/lib";
-use util;
-use release;
 override_warn_and_die();
 
-use Time::Piece;
 use Data::Dumper;
+use Errno;
 use JSON::XS;
 use POSIX ':sys_wait_h';
+use Time::Piece;
+
+use boost;
+use child_commands;
+use child_manager;
 use config;
+use history;
+use logger;
+use market;
 use miner;
+use option;
 use perf;
+use release;
+use ring;
+use util;
 use xlinux;
 
 our $verbose = 0;
 our %opts = (
-    'period'        => 60 * 6         # 6 minutes
-  , 'window'        => 'm5'           # trailing 5 minute average
-  , 'retention'     => 10 * 24 * 30   # one month
-  , 'samples'       => 60 * 10        # ten minutes
-  , 'profile'       => 'default'
-  , 'worker'        => ''
+    'profile'                         => 'default'
 
-  # miner executables expected to be in $PATH by default
-  , 'ccminer_path'              => 'ccminer'
-  , 'ccminer_cryptonight_path'  => 'ccminer-cryptonight'
-  , 'ethminer_path'             => 'ethminer'
-  , 'nheqminer_cuda_path'       => 'nheqminer_cuda'
-  , 'sgminer_path'              => 'sgminer'
-  , 'eqm_path'                  => 'eqm'
+  # minimal defaults
+  , 'algo-trailing-window-seconds'    => 60 * 60        # one hour
+  , 'algo-trailing-window-minimum'    => 60 * 5         # five minutes
+  , 'switching-period'                => 60 * 6         # six minutes
+  , 'switching-threshold'             => 0              # no threshold
+  , 'history-retention-samples'       => 1680           # one week, at a six minute switching period
+
+  # miner executables, search $PATH by default
+  , 'ccminer-path'                    => 'ccminer'
+  , 'ccminer-cryptonight-path'        => 'ccminer-cryptonight'
+  , 'ethminer-path'                   => 'ethminer'
+  , 'nheqminer-cuda-path'             => 'nheqminer_cuda'
+  , 'sgminer-path'                    => 'sgminer'
+  , 'eqm-path'                        => 'eqm'
 );
 my %optargs = (
-    'help|h'            => \$opts{help}
-  , 'version|V'         => \$opts{version}
-  , 'verbose|v'         => \$opts{verbose}
+    'help|h'                          => \$opts{help}
+  , 'version|V'                       => \$opts{version}
+  , 'verbose|v'                       => \$opts{verbose}
 
-  , 'data-dir=s'        => \$opts{datadir}
-  , 'profile=s'         => \$opts{profile}
-  , 'payout-address=s'  => \$opts{payout_address}
-  , 'worker=s'          => \$opts{worker}
-  , 'period=i'          => \$opts{period}
-  , 'cards=s'           => \$opts{cards}
-  , 'retention=i'       => \$opts{retention}    # benchmark files to retain
-  , 'samples=i'         => \$opts{samples}      # samples to use in speed calculation
-  , 'window=s'          => \$opts{window}
+  # state
+  , 'cache-dir=s'                     => \$opts{"cache-dir"}
+  , 'history-dir=s'                   => \$opts{"history-dir"}
+  , 'run-dir=s'                       => \$opts{"run-dir"}
 
-  , 'nicehash-usa'      => \$opts{"nicehash-usa"}
-  , 'nicehash-eu'       => \$opts{"nicehash-eu"}
+  # basic setup
+  , 'profile=s'                       => \$opts{profile}
+  , 'worker=s'                        => \$opts{worker}
+  , 'cards=s'                         => \$opts{cards}
+  , 'history-retention-samples=i'     => \$opts{"history-retention-samples"}
 
-  , 'ccminer-path=s'              => \$opts{ccminer_path}
-  , 'ccminer-cryptonight-path=s'  => \$opts{ccminer_cryptonight_path}
-  , 'ethminer-path=s'             => \$opts{ethminer_path}
-  , 'nheqminer-cuda-path=s'       => \$opts{nheqminer_cuda_path}
-  , 'sgminer-path=s'              => \$opts{sgminer_path}
-  , 'eqm-path=s'                  => \$opts{eqm_path}
+  # algo benchmarking
+  , 'algo-trailing-window-seconds=i'  => \$opts{"algo-trailing-window-seconds"}
+  , 'algo-trailing-window-minimum=i'  => \$opts{"algo-trailing-window-minimum"}
+
+  # selection
+  , 'switching-threshold=i'           => \$opts{"switching-threshold"}
+  , 'switching-period=i'              => \$opts{"switching-period"}
+
+  # logging
+  , 'show-boost!'                     => \$opts{"show-boost"}
+  , 'show-boosts!'                    => \$opts{"show-boost"}
+  , 'show-configuration!'             => \$opts{"show-configuration"}
+  , 'show-hashrate!'                  => \$opts{"show-hashrate"}
+  , 'show-miner-output!'              => \$opts{"show-miner-output"}
+  , 'show-prediction!'                => \$opts{"show-prediction"}
+  , 'show-selection!'                 => \$opts{"show-selection"}
+
+  # boost
+  , 'boost!'                          => \$opts{boost}
+  , 'boosts!'                         => \$opts{boost}
+  , 'use-boost!'                      => \$opts{boost}
+  , 'use-boosts!'                     => \$opts{boost}
+  , 'boost-trailing-window-seconds=i' => \$opts{"boost-trailing-window-seconds"}
+  , 'boost-trailing-window-samples=i' => \$opts{"boost-trailing-window-samples"}
+  , 'boost-trailing-window-pad=i'     => \$opts{"boost-trailing-window-pad"}
+
+  # nicehash
+  , 'nicehash-usa!'                   => \$opts{"nicehash-usa"}
+  , 'nicehash-eu!'                    => \$opts{"nicehash-eu"}
+  , 'nh-address=s'                    => \$opts{"nh-address"}
+  , 'nh-switching-period=i'           => \$opts{"nh-switching-period"}
+  , 'nh-price-method=s'               => \$opts{"nh-price-method"}
+  , 'nh-trailing-sma-window=s'        => \$opts{"nh-trailing-sma-window"}
+
+  # miningpoolhub
+  , 'miningpoolhub!'                  => \$opts{"miningpoolhub"}
+  , 'mph-username=s'                  => \$opts{"mph-username"}
+  , 'mph-apikey=s'                    => \$opts{"mph-apikey"}
+  , 'mph-switching-period=i'          => \$opts{"mph-switching-period"}
+  , 'mph-round-duration-limit=i'      => \$opts{"mph-round-duration-limit"}
+
+  # miner paths
+  , 'ccminer-path=s'                  => \$opts{"ccminer-path"}
+  , 'ccminer-cryptonight-path=s'      => \$opts{"ccminer-cryptonight-path"}
+  , 'ethminer-path=s'                 => \$opts{"ethminer-path"}
+  , 'nheqminer-cuda-path=s'           => \$opts{"nheqminer-cuda-path"}
+  , 'sgminer-path=s'                  => \$opts{"sgminer-path"}
+  , 'eqm-path=s'                      => \$opts{"eqm-path"}
 );
 configure(\%optargs, \%opts);
 
@@ -90,34 +142,66 @@ autominer - an autoswitching miner for linux, version $release::number
 
 usage: autominer mine [options]
 
- --help                    print this help text
- --version                 print the version number, exit
- --verbose                 print commands as they are run
- --quiet                   dont echo output from the miner to stdout
+ --help         print this help text
+ --version      print the version number, exit
+ --verbose      print commands as they are run
 
 required
- --payout-address <addr>   where to send mining rewards - part of the username mining parameter
- --cards <device-ids>      comma-separated list of devices ids to mine with
- --data-dir <path>         base location for perf, history and market data
+ --cache-dir <path>     base directory for aggregated market and mining data
+ --history-dir <path>   base directory for mining history
+ --run-dir <path>       base directory for process lockfiles
+ --cards <device-ids>   comma-separated list of devices ids to mine with
 
-required - at least one
- --nicehash-usa            consider mining on algos in nicehash.usa
- --nicehash-eu             consider mining on algos in nicehash.eu
+basic setup
+ --profile <name>             separate config file and history
+ --worker <name>              name of this mining rig
+ --history-retention-samples  number of mining intervals to retain history for
 
-optional
- --profile <name>          separate config file, perf and history data
- --worker <name>           name of this mining rig / worker - part of the username mining parameter
- --period <seconds>        how frequently to re-evaluate what to mine
- --retention <number>      number of per-period sessions to retain
- --samples <seconds>       number of trailing perf samples to estimate future performance from
+algo benchmarking
+ --algo-trailing-window-seconds   duration of algo history to use for estimating hashrate [default: 3 hours]
+ --algo-trailing-window-minimum   minimum required length of algo history to estimate hashrate [default: 5 minutes]
 
-optional - miner executables
+selection
+ --switching-period <seconds>   how frequently to re-evaluate what option to mine [default: 6 minutes]
+ --switching-threshold <pct>    only switch if the predicted profit difference meets or exceeds this threshold [default: 0]
+
+boosting
+ --boost                          enable boosting [default: false]
+ --boost-trailing-window-seconds  discard samples older than <seconds>
+ --boost-trailing-window-samples  discard all but the most recent N samples
+ --boost-trailing-window-pad      in samples
+
+nicehash
+ --nicehash-usa                   consider mining algos on nicehash.usa
+ --nicehash-eu                    consider mining algos on nicehash.eu
+ --nh-address <address>           nicehash address - where to send rewards
+ --nh-price-method opportunity    predict nicehash profits using the opportunity price
+ --nh-price-method trailing-sma   predict nicehash profits using the use trailing average price paid
+ --nh-trailing-sma-window         for trailing-sma, price window to use, one of s30|m1|m5|m10|h1|h3
+ --nh-switching-period            override the global switching period for nh selections
+
+miningpoolhub
+ --mph                                consider mining pools on miningpoolhub
+ --mph-username <string>              mph username
+ --mph-apikey <string>                apikey for your miningpoolhub account
+ --mph-switching-period <seconds>     override the global switching period for mph selections
+ --mph-round-duration-limit <seconds> ignore pools which last mined a block more than <seconds> ago
+
+miners
  --ccminer-path <path>              path to the ccminer executable
  --ccminer-cryptonight-path <path>  path to the ccminer-cryptonight executable
  --ethminer-path <path>             path to the ethminer executable
  --nheqminer-cuda-path <path>       path to the nheqminer_cuda executable
  --sgminer-path <path>              path to the sgminer executable
  --eqm-path <path>                  path to the eqm executable
+
+logging
+ --show-boost           log changes to boost factors
+ --show-configuration   log parsing of configuration options
+ --show-hashrate        log changes to algo hashrates
+ --show-miner-output    tee miner stdout to stdout
+ --show-selection       show a table of mining options and predicted profit for each
+ --show-prediction      for the selected option, show profit prediction details
 
 For more information visit https://github.com/hossbeast/autominer
 HELP
@@ -129,130 +213,108 @@ if($opts{version})
   exit 0;
 }
 
-die "missing required config --payout-address" unless $opts{payout_address};
-die "missing required config --data-dir" unless $opts{datadir};
+die "missing required config --run-dir" unless $opts{"run-dir"};
+die "missing required config --cache-dir" unless $opts{"cache-dir"};
+die "missing required config --history-dir" unless $opts{"history-dir"};
 die "missing required config --cards" unless defined $opts{"comma-cards"};
-die "missing required config --nicehash-usa or --nicehash-eu" unless $opts{"nicehash-usa"} or $opts{"nicehash-eu"};
-
-if($verbose)
+die "missing required config --history-retention-samples" unless $opts{"history-retention-samples"};
+if($opts{"nicehash-eu"} || $opts{"nicehash-eu"})
 {
-  printf("parameters\n");
-  printf("%20s %s\n", "profile", $opts{profile});
-  printf("%20s %s\n", "data-dir", $opts{datadir});
-  printf("%20s %s\n", "payout-address", $opts{payout_address});
-  printf("%20s %s\n", "worker", $opts{worker});
-  printf("%20s %s\n", "cards", $opts{"comma-cards"});
-  printf("%20s %s\n", "evaluation period", $opts{period});
-  printf("%20s %s\n", "samples", $opts{samples});
-  printf("%20s %s\n", "window", $opts{window});
-  printf("%20s %s\n", "retention", $opts{retention});
-  printf("%20s %s\n", "nicehash-usa", $opts{"nicehash-usa"} ? "yes" : "no");
-  printf("%20s %s\n", "nicehash-eu", $opts{"nicehash-eu"} ? "yes" : "no");
-}
-
-$SIG{CHLD} = 'IGNORE';
-
-# ensure directories exist
-mkdirp("$opts{datadir}");
-mkdirp("$opts{datadir}/bench");
-mkdirp("$opts{datadir}/bench/$opts{profile}");
-mkdirp("$opts{datadir}/history");
-mkdirp("$opts{datadir}/history/$opts{profile}");
-mkdirp("/tmp/run");
-mkdirp("/tmp/run/autominer");
-mkdirp("/tmp/run/autominer/aggregator");
-
-# load miners
-my $benchdir = "$opts{datadir}/bench/$opts{profile}";
-my %miners = enumerate_miners("$repodir/miners");
-die "no miners" unless %miners;
-
-for my $miner (values %miners)
-{
-  # load supported algorithms
-  enumerate_algos($miner);
-
-  mkdirp("$opts{datadir}/bench/$opts{profile}/$$miner{name}");
-
-  # load perf data per algo
-  for my $algo (values %{$$miner{algos}})
+  die "missing required config --nh-address" unless $opts{"nh-address"};
+  die "missing required config --nh-price-method" unless $opts{"nh-price-method"};
+  if($opts{"nh-price-method"} eq "trailing-sma")
   {
-    perf_initialize($miner, $algo, $benchdir);
+    die "missing required config --nh-trailing-sma-window" unless $opts{"nh-trailing-sma-window"};
   }
 }
-
-# initialize history files
-my $history_dir = "$opts{datadir}/history/$opts{profile}";
-my $history_head = readlink("$history_dir/head");
-$history_head = int $history_head if $history_head;
-
-my $history_tail = readlink("$history_dir/tail");
-$history_tail = int $history_tail if $history_tail;
-
-# prune history files outside the retention window
-if(defined $history_head and defined $history_tail)
+if($opts{"miningpoolhub"})
 {
-  while(ring_sub($history_head, $history_tail, 0xffff) > $::opts{retention})
-  {
-    uxunlink(sprintf("%s/%05u", $history_dir, $history_tail));
-    $history_tail = ring_add($history_tail, 1, 0xffff);
-  }
-  symlinkf(sprintf("%05u", $history_tail), "$history_dir/tail");
+  die "missing required config --mph-username" unless $opts{"mph-username"};
+  die "missing required config --mph-apikey" unless $opts{"mph-apikey"};
+  die "missing required config --worker" unless $opts{worker};
+}
+if($opts{"boost"})
+{
+  die "missing required config --boost-trailing-window-samples" unless defined $opts{"boost-trailing-window-samples"};
+  die "missing required config --boost-trailing-window-seconds" unless defined $opts{"boost-trailing-window-seconds"};
 }
 
+# ensure state directories exist
+mkdirp($opts{"cache-dir"});
+mkdirp($opts{"history-dir"});
+mkdirp($opts{"run-dir"} . "/autominer-aggregator");
+
+# delegate SIG{CHLD}
+child_manager_configure();
+
+# configure miners
+my @miners = miners_load("$repodir/miners", $opts{"history-dir"}, %opts);
+die "no miners" unless @miners;
+
+# configure markets
+my @markets = markets_load(%opts);
+die "no markets" unless @markets;
+
+# intialize boosts
+boost_configure(%opts);
+
+# mining choices and performance are recorded as separate history streams
+# streams pushed here are persistent
+my $history = history::new($opts{"history-dir"}, $opts{"history-retention-samples"}, $opts{profile});
+if($opts{worker})
+{
+  $history->push("worker" => $opts{worker});
+}
+$history->mark();
+
+# per coin market and mining stats
+my $coinstats;
+
+# program state
 my $quit = 0;
-my $mining_market = '';
-my $mining_miner = '';
-my $mining_algo = '';
-my $miner_pid = 0;
-my $perf_pid = 0;
-my $nicehash_aggregator_eu_pid = 0;
-my $nicehash_aggregator_usa_pid = 0;
-
-$SIG{CHLD} = sub {
-  local ($!, $?);
-  while((my $pid = waitpid(-1, WNOHANG)) > 0) {
-    my $exit = $? >> 8;
-    my $sig = $? & 127;
-    if($pid == $miner_pid)
-    {
-      printf("CHLD miner-pid=$pid, status=$?, exit=$exit, signal=$sig\n");
-      $miner_pid = 0;
-    }
-    elsif($pid == $perf_pid)
-    {
-      printf("CHLD perf-pid=$pid, status=$?, exit=$exit, signal=$sig\n");
-      $perf_pid = 0;
-    }
-    elsif($pid == $nicehash_aggregator_eu_pid)
-    {
-      printf("CHLD nicehash-aggregator-eu-pid=$pid, status=$?, exit=$exit, signal=$sig\n");
-      $nicehash_aggregator_eu_pid = 0;
-    }
-    elsif($pid == $nicehash_aggregator_usa_pid)
-    {
-      printf("CHLD nicehash-aggregator-usa-pid=$pid, status=$?, exit=$exit, signal=$sig\n");
-      $nicehash_aggregator_usa_pid = 0;
-    }
-  }
-};
-
 $SIG{TERM} = $SIG{QUIT} = sub {
   $quit = 1;
 };
 
-# spawn market aggregators if they are not already running
-for my $market ("usa", "eu")
+sub load_coinstats
 {
-  next unless $opts{"nicehash-$market"};
+  my $path = sprintf("%s/coinstats/%s", $opts{"cache-dir"}, "present");
+  open(my $fh, "<$path") or die "open($path) : $!";
+  my $text = do { local $/ = undef ; <$fh> };
+  close $fh;
+  $coinstats = decode_json($text);
+}
+
+# spawn aggregators if they are not already running
+for my $agg_args (["nh", "--region", "usa"], ["nh", "--region", "eu"], ["coinstats"], ["mph"])
+{
+  my $source = shift @$agg_args;
+  my @args = @$agg_args;
+  my $aggregator_name = $source;
+  $aggregator_name .= "-$args[1]" if $source eq "nh";
+
+  # run market aggregators on demand, always run coinstats aggregator
+  if($source eq "nh" || $source eq "mph")
+  {
+    my $param;
+    $param = "nicehash-$args[1]" if $source eq "nh";
+    $param = "miningpoolhub" if $source eq "mph";
+    next unless $opts{$param};
+  }
 
   my $pid;
   if(($pid = fork()) == 0)
   {
-    my $holder = lock_obtain("/tmp/run/autominer/aggregator/nicehash-$market");
+    my @cmd = (
+        "$repodir/bin/autominer-$source-aggregator"
+      , @args
+    );
+
+    my $locksdir = $opts{"run-dir"} . "/autominer-aggregator";
+    my $holder = lock_obtain("$locksdir/$aggregator_name");
     if($holder)
     {
-      print("nicehash-aggregator --region $market already running : $holder\n") if $verbose;
+      print STDERR ("@cmd already running : $holder\n") if $verbose;
       exit;
     }
 
@@ -260,12 +322,10 @@ for my $market ("usa", "eu")
     POSIX::close(0);
     pr_set_pdeathsig(9);
 
-    my @cmd = ("$repodir/bin/nicehash-aggregator", "--region", "$market");
     exec { $cmd[0] } @cmd;
   }
 
-  $nicehash_aggregator_eu_pid = $pid if $market eq "eu";
-  $nicehash_aggregator_usa_pid = $pid if $market eq "usa";
+  putchild("$aggregator_name-aggregator", $pid);
 }
 
 # pipes are named according to which process writes to it
@@ -273,206 +333,273 @@ my ($miner_reader_fd, $miner_writer_fd) = POSIX::pipe();
 my ($perf_reader_fd, $perf_writer_fd) = POSIX::pipe();
 my ($autominer_reader_fd, $autominer_writer_fd) = POSIX::pipe();
 
-sub getrates
+if($verbose)
 {
-  my ($market, $window) = @_;
-
-  my $path = "$opts{datadir}/rates/$market/$window";
-  open(my $fh, "<$path") or die "open($path) : $!";
-  my $text = do { local $/ = undef ; <$fh> };
-  close $fh;
-
-  decode_json($text);
+  print("miner-reader $miner_reader_fd miner-writer $miner_writer_fd\n");
+  print("perf-reader $perf_reader_fd perf-writer $perf_writer_fd\n");
+  print("autominer-reader $autominer_reader_fd autominer-writer $autominer_writer_fd\n");
 }
 
-my %rates;
+# option currently being mined, if any
+my $current_option;
+my $perf_time_base;
 while(!$quit)
 {
-  $rates{"nicehash-usa"} = getrates("nicehash-usa", $opts{window}) if $opts{"nicehash-usa"};
-  $rates{"nicehash-eu"} = getrates("nicehash-eu", $opts{window}) if $opts{"nicehash-eu"};
-
-  # evaluate mining options
-  my @options;
-  for my $market ("nicehash-usa", "nicehash-eu")
+  # re-load market stats
+  load_coinstats();
+  for my $market (@markets)
   {
-    next unless $opts{$market};
+    $market->load_rates($coinstats);
+  }
 
-    while(my($minername, $miner) = each %miners)
+  # option to mine during this round
+  my $option;
+
+  # gather mining options, sort by predicted profit
+  my $next_current_option;
+  my @options;
+  for my $market (@markets)
+  {
+    for my $candidate ($market->assemble_mining_options(\@miners))
     {
-      while(my($algoname, $algo) = each %{$$miner{algos}})
+      if($current_option && option_cmp($candidate, $current_option) == 0)
       {
-        my $rate = $rates{$market}{$algoname};
-        next unless $rates{$market}{$algoname};
+        $candidate = $next_current_option = $current_option;
+      }
 
-        push @options, {
-            miner => $miner
-          , algo => $algo
-          , market => $market
-          , rate => $rates{$market}{$algoname}
-          , profit => $$algo{speed} * $rates{$market}{$algoname}
-        };
+      $market->evaluate_option($candidate);
+      push @options, $candidate;
+    }
+  }
+
+  $current_option = $next_current_option;
+
+  @options = sort {
+       $$a{algo}{hashrate_duration} < $opts{"algo-trailing-window-minimum"} ? -1 : 0
+    || $$b{algo}{hashrate_duration} < $opts{"algo-trailing-window-minimum"} ? 1 : 0
+    || $$b{predicted_profit} <=> $$a{predicted_profit}
+  } @options;
+
+  # select the best option in order of descending profit
+  for my $candidate (@options)
+  {
+    if($option) { }
+    elsif($$candidate{algo}{hashrate_duration} < $opts{"algo-trailing-window-minimum"})
+    {
+      $option = $candidate;
+    }
+    elsif(!$current_option || $$candidate{current})
+    {
+      $option = $candidate;
+    }
+    else
+    {
+      my $variance = variance($$current_option{predicted_profit}, $$candidate{predicted_profit});
+      if(($variance * 100) >= $opts{"switching-threshold"})
+      {
+        $option = $candidate;
       }
     }
-  }
 
-  @options = sort { $$b{profit} <=> $$a{profit} } @options;
-  my $option = $options[0];
+    # print details about the selection
+    if($opts{"show-selection"})
+    {
+      my $profit = "(insufficient benchmark data, less than " . durationstring($opts{"algo-trailing-window-minimum"}) . ")";
+      if($$candidate{algo}{hashrate_duration} >= $opts{"algo-trailing-window-minimum"}) {
+        $profit = sprintf("%14.8f", $$candidate{predicted_profit});
+      }
 
-  for my $option (@options)
-  {
-    my $profit = "(no data)";
-    if($$option{algo}{speed} != 0xFFFFFFFF) {
-      $profit = sprintf("%14.8f", $$option{profit});
+      printf("%-15s", $$candidate{market}{name});
+      printf(" %-20s", $$candidate{pool}{name});
+      printf(" %-20s", $$candidate{miner}{name});
+      printf(" %-20s", $$candidate{algo}{name});
+      printf(" predicted profit %-14s", $profit);
+      printf(" boost %7.2f", $$candidate{boost}{modifier});
+
+      if($$candidate{current})
+      {
+        print(" <<<"); # previous option
+      }
+      else
+      {
+        print("   ");
+      }
+
+      # just-selected option
+      if($option && $candidate == $option)
+      {
+        print(" <<=")
+      }
+
+      print("\n");
     }
-
-    printf "market %-15s miner %-20s algo %-20s rate %14.8f * speed %14.8f = profit %-10s\n"
-      , $$option{market}
-      , $$option{miner}{name}
-      , $$option{algo}{name}
-      , $$option{rate}
-      , $$option{algo}{speed}
-      , $profit
-    ;
   }
 
-  my $market = $$option{market};
-  my $miner = $$option{miner};
-  my $algo = $$option{algo};
-
-  # open a new bench file to store the results of this run
-  my $miner_bench_dir = "$opts{datadir}/bench/$opts{profile}/$$miner{name}";
-  my $algo_bench_dir = "$miner_bench_dir/$$algo{name}";
-  my $bench_file_num = ($$algo{head} || 0) + 1;
-  my $bench_path = sprintf("%s/%05u", $algo_bench_dir, $bench_file_num);
-  open(my $bench_fh, ">$bench_path") or die "open($bench_path) : $!";
-
-  # the header line contains details about the selected option
-  my $perf_header = sprintf("%-10s %12u %15s %30s %3s %14.8f * %14.8f = %14.8f\n\n"
-    , $release::number
-    , time()
-    , $market
-    , "$$miner{name}/$$algo{name}"
-    , $opts{window}
-    , $$algo{speed}
-    , $$option{rate}
-    , $$option{profit}
-  );
-  syswrite($bench_fh, $perf_header, length($perf_header));
-
-  # advance the history files
-  $history_head = 0 unless $history_head;
-  $history_head = ring_add($history_head, 1, 0xffff);
-  symlinkf($bench_path, sprintf("%s/%05u", $history_dir, $history_head));
-  symlinkf(sprintf("%05u", $history_head), "$history_dir/head");
-
-  if(not defined $history_tail)
+  if(!$$option{current} || $opts{"show-prediction"})
   {
-    $history_tail = $history_head;
-    symlinkf(sprintf("%05u", $history_tail), "$history_dir/tail");
-  }
-  elsif(ring_sub($history_head, $history_tail, 0xffff) >= $::opts{retention})
-  {
-    uxunlink(sprintf("%s/%05u", $history_dir, $history_tail));
-    $history_tail = ring_add($history_tail, 1, 0xffff);
-    symlinkf(sprintf("%05u", $history_tail), "$history_dir/tail");
+    logf("%-60s predicted %-14.8f %6s %14s %8s %7s boost %7.2f <<=="
+      , sprintf("%s/%s/%s/%s"
+          , $$option{market}{name}
+          , $$option{pool}{name}
+          , $$option{miner}{name}
+          , $$option{algo}{name}
+        )
+      , $$option{predicted_profit}
+      , "", "", "", ""
+      , $$option{boost}{modifier}
+    );
+
+    if($opts{"show-prediction"})
+    {
+      $$option{market}->show_prediction($option);
+    }
   }
 
-  if(!$miner_pid || !$perf_pid || $market ne $mining_market || $$miner{name} ne $mining_miner || $$algo{name} ne $mining_algo)
+  if(!$$option{current} || !$children_by_name{miner} || !$children_by_name{perf})
   {
-    miner_env_setup(market => $market, miner => $$miner{name}, algo => $$algo{name});
+    killchildren("miner", "perf");
+
+    miner_env_setup($$option{miner}{name}, $option);
 
     # miner writes to autominer
-    killfast([ \$miner_pid, \$perf_pid ]);
-    $miner_pid = fork;
+    my $miner_pid = fork;
     if($miner_pid == 0)
     {
-      POSIX::dup2($miner_writer_fd, 1);
+      POSIX::dup2($miner_writer_fd, 1) or die("dup2($miner_writer_fd, 1) : $!");
 
-      pr_set_pdeathsig(9);
+      pr_set_pdeathsig(9) or die("pr_set_pdeathsig(9) : $!");
 
-      my @cmd = ($$miner{path}, "mine");
+      my @cmd = ($$option{miner}{path}, "mine");
       exec { $cmd[0] } @cmd;
     }
+    putchild("miner", $miner_pid);
 
     # perf reads from autominer via one pipe, and writes to autominer via a separate pipe
-    $perf_pid = fork;
+    my $perf_pid = fork;
     if($perf_pid == 0)
     {
-      POSIX::dup2($autominer_reader_fd, 0);
-      POSIX::dup2($perf_writer_fd, 1);
+      POSIX::dup2($autominer_reader_fd, 0) or die("dup2($autominer_reader_fd, 0) : $!");
+      POSIX::dup2($perf_writer_fd, 1) or die("dup2($perf_writer_fd, 1) : $!");
 
-      pr_set_pdeathsig(9);
+      pr_set_pdeathsig(9) or die("pr_set_pdeathsig(9) : $!");
 
-      my @cmd = ($$miner{path}, "perf");
+      my @cmd = ($$option{miner}{path}, "perf");
       exec { $cmd[0] } @cmd;
     }
+    putchild("perf", $perf_pid);
 
-    $mining_market = $market;
-    $mining_miner = $$miner{name};
-    $mining_algo = $$algo{name};
+    # reset option state
+    $option->reset();
+    $perf_time_base = 0;
   }
 
-  # read from the perf pipe until the period elapses
-  perf_startfile($miner, $algo);
+  $$option{current} = 1;
+  $current_option = $option;
 
-  my $T = time();
-  my $buffer = '';
-  my $data;
-  my $s30;
+  # reset per-period option state
+  $option->start();
 
-  my $rin = '';
-  vec($rin, $miner_reader_fd, 1) = 1;
-  vec($rin, $perf_reader_fd, 1) = 1;
-  while(1)
+  my $switching_period = $$option{market}->switching_period() || $opts{"switching-period"};
+  my $results = {};
+  OPTION: while((time() - $$option{start}) < $switching_period)
   {
-    my $r = select(my $rout = $rin, undef, undef, 5);
+    my $interval = $$option{market}->get_mining_interval($option);
+    $interval = $switching_period unless $interval;
 
-    if(!$miner_pid || !$perf_pid)
+    my $buffer = '';
+    my $data;
+
+    my $rin = '';
+    vec($rin, $miner_reader_fd, 1) = 1;
+    vec($rin, $perf_reader_fd, 1) = 1;
+    my $iteration_start = time();
+    while(1)
     {
-      print("miner or perf terminated early!");
-      last;
-    }
+      my $r = select(my $rout = $rin, undef, undef, 5);
 
-    next unless $r > 0;
-
-    # read from miner, write to perf, tee to stdout
-    if(vec($rout, $miner_reader_fd, 1) == 1)
-    {
-      my $r = POSIX::read($miner_reader_fd, $data, 0xffff);
-      POSIX::write(1, $data, $r);
-      POSIX::write($autominer_writer_fd, $data, $r);
-    }
-
-    # read from perf, write to /bench/foo
-    if(vec($rout, $perf_reader_fd, 1) == 1)
-    {
-      my $r = POSIX::read($perf_reader_fd, $data, 0xffff);
-      $buffer .= $data;
-
-      $s30 = undef;
-
-      # consume full lines
-      while((my $nl = index($buffer, "\n")) >= 0)
+      if(!$children_by_name{miner} || !$children_by_name{perf})
       {
-        my $line = substr($buffer, 0, $nl + 1, '');
-        chomp $line;
-
-        # get the most current rates
-        $s30 = getrates($market, "s30") if not defined $s30;
-        my $record = sprintf("%s %14.8f\n", $line, $$s30{$$algo{name}});
-        syswrite($bench_fh, $record, length($record));
-
-        perf_readline($miner, $algo, $line);
+        logf("miner or perf terminated unexpectedly!");
+        last OPTION;
       }
 
-      # minimize lost shares by switching right after reading a perf record
-      last if (time() - $T) >= ($opts{period});
+      if($r <= 0)
+      {
+        # this happens if the perf process never emits a perf record
+        last if (time() - $iteration_start) > $interval;
+      }
+
+      next unless $r > 0;
+
+      # read from miner, write to perf, (optionally) tee to stdout
+      if(vec($rout, $miner_reader_fd, 1) == 1)
+      {
+        if(($r = aread($miner_reader_fd, $data, 0xffff)))
+        {
+          awrite(1, $data, $r) if $opts{"show-miner-output"};
+          awrite($autominer_writer_fd, $data, $r);
+        }
+      }
+
+      # read from perf
+      if(vec($rout, $perf_reader_fd, 1) == 1)
+      {
+        if(($r = aread($perf_reader_fd, $data, 0xffff)))
+        {
+          $buffer .= $data;
+
+          # consume full lines
+          while((my $nl = index($buffer, "\n")) >= 0)
+          {
+            my $line = substr($buffer, 0, $nl + 1, '');
+            my @hashrate_records = perf_readline(\$perf_time_base, $line);
+            $option->hashrate_sample(@hashrate_records);
+          }
+
+          # minimize lost shares by switching right after reading a perf record
+          last if (time() - $iteration_start) > $interval;
+        }
+      }
     }
+
+    # get results for the interval just elapsed
+    my $interval_results = $$option{market}->get_mining_results($option, $coinstats);
+    $$option{market}->accumulate_mining_results($results, $interval_results);
   }
 
-  close($bench_fh);
-  perf_endfile($miner, $algo, $benchdir, $bench_file_num);
-  perf_update($miner, $algo, $benchdir);
+  $option->end($results);
+  $$option{hashrate} ||= 0;
+  $$option{algo}->sample($$option{duration}, $$option{hashrate});
+  $$option{algo}->report() if $opts{"show-hashrate"};
+
+  $history->rewind();
+  $history->push(miner => $$option{miner}{name});
+  $history->push(market => $$option{market}{name});
+  $history->push(algo => $$option{algo}{name}, miner => $$option{miner}{name});
+  $history->push(market => $$option{market}{name}, pool => $$option{pool}{name});
+  $history->push("nh-address" => $opts{"nh-address"}) if substr($$option{market}{name}, 8) eq "nicehash";
+  $history->push("mph-username" => $opts{"mph-username"}) if $$option{market}{name} eq "miningpoolhub";
+
+  my $text = $option->record();
+  $history->write($text);
+
+  my $variance_noboost = variance2($$option{predicted_profit_noboost}, $$option{actual_profit});
+  $$option{boost}->sample($$option{start}, $variance_noboost);
+  $$option{boost}->report() if $opts{"show-boost"};
+
+  my $variance = variance2($$option{predicted_profit}, $$option{actual_profit});
+  logf("%-60s predicted %-14.8f profit %-14.8f variance %-7.2f boost %7.2f"
+    , sprintf("%s/%s/%s/%s"
+        , $$option{market}{name}
+        , $$option{pool}{name}
+        , $$option{miner}{name}
+        , $$option{algo}{name}
+      )
+    , $$option{predicted_profit}
+    , $$option{actual_profit}
+    , $variance
+    , $$option{boost}{modifier}
+  );
 }
 
-killfast([ \$miner_pid, \$perf_pid, \$nicehash_aggregator_eu_pid, \$nicehash_aggregator_usa_pid ]);
+killchildren()

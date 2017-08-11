@@ -1,51 +1,89 @@
 #!/usr/bin/env perl
 
-# Copyright (c) 2017 Todd Freed <todd.freed@gmail.com>
-# 
+#
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
+#
 # This file is part of autominer.
-# 
+#
 # autominer is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # autominer is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
+#
 
 use strict;
 use warnings;
 
-use File::Basename;
 use Cwd;
+use File::Basename;
 our $repodir;
 BEGIN { $repodir = dirname(Cwd::realpath("$0/..")) }
 use lib "$repodir/lib";
 use util;
-use release;
 override_warn_and_die();
 
-use File::Find;
-use Time::Piece;
+use Data::Dumper;
+use JSON::XS;
+
+use ring;
+use util;
+use stream;
+use release;
 use config;
 
 our $verbose = 0;
 our %opts = (
-    'datadir'       => $ENV{HOME} . "/.autominer/data"
-  , 'sort'          => 'h3'
-  , 'profile'       => 'default'
+    'profile'           => 'default'  # for config options
+
+  # minimal defaults
+  , 'history-profile'   => 'default'  # for history stream selection
+  , 'bucket-on-market'  => 0
+  , 'bucket-on-pool'    => 1
+  , 'bucket-on-miner'   => 0
+  , 'bucket-on-algo'    => 0
 );
 my %optargs = (
-    'help|h'        => \$opts{help}
-  , 'version|V'     => \$opts{version}
-  , 'verbose|v'     => \$opts{verbose}
+    'help|h'                    => \$opts{help}
+  , 'version|V'                 => \$opts{version}
+  , 'verbose|v'                 => \$opts{verbose}
 
-  , 'data-dir=s'    => \$opts{"datadir"}
-  , 'profile=s'     => \$opts{profile}
-  , 'transitions'   => \$opts{transitions}
+  # state
+  , 'history-dir=s'             => \$opts{"history-dir"}
+
+  # basic setup
+  , 'profile=s'                 => \$opts{profile}
+
+  # history stream selection
+  , 'history-profile=s'         => \$opts{"history-profile"}
+  , 'history-nh-address=s'      => \$opts{"history-nh-address"}
+  , 'history-mph-username=s'    => \$opts{"history-mph-username"}
+  , 'history-worker=s'          => \$opts{"history-worker"}
+  , 'history-miner=s'           => \$opts{"history-miner"}
+  , 'history-algo=s'            => \$opts{"history-algo"}
+  , 'history-market=s'          => \$opts{"history-market"}
+  , 'history-pool=s'            => \$opts{"history-pool"}
+
+  # history period selection
+  , 'period-from=i'             => \$opts{"period-from"}
+  , 'period-to=i'               => \$opts{"period-to"}
+  , 'period-trailing=i'         => \$opts{"period-trailing"}
+
+  # history aggregation
+  , 'bucket-on-market!'         => \$opts{"bucket-on-market"}
+  , 'bucket-on-pool!'           => \$opts{"bucket-on-pool"}
+  , 'bucket-on-miner!'          => \$opts{"bucket-on-miner"}
+  , 'bucket-on-algo!'           => \$opts{"bucket-on-algo"}
+
+  # logging
+  , 'show-records'              => \$opts{"show-records"}
+  , 'show-configuration!'       => \$opts{"show-configuration"}
 );
 configure(\%optargs, \%opts);
 
@@ -58,16 +96,42 @@ autominer - an autoswitching miner for linux, version $release::number
 
 usage: autominer stats [options]
 
- --help               print this help text
- --version            print the version number, exit
- --verbose            print commands as they are run
+ --help       print this help text
+ --version    print the version number, exit
+ --verbose    print commands as they are run
 
 required
- --data-dir <path>    location for benchark and market data
+ --history-dir <path>   base directory for mining history
 
-optional
- --profile <name>     separate config file and benchmark data
- --transitions        show only transitions
+basic setup
+ --profile <name>    separate config file and history
+
+history stream selection
+ --history-profile <name>        select history for a profile   [default: default]
+ --history-algo <name>           select history for an algo
+ --history-market <name>         select history for a market
+ --history-miner <name>          select history for a miner
+ --history-mph-username <addr>   select history for a miningpoolhub username
+ --history-nh-address <addr>     select history for a nicehash address
+ --history-pool <name>           select history for a pool
+ --history-worker <name>         select history for a worker
+
+history period selection
+ --period-from <epoch>         period starting at <epoch> [default: 0]
+ --period-to <epoch>           period ending at <epoch>
+ --period-trailing <seconds>   period starting <seconds> seconds ago and ending now
+
+history aggregation
+ --bucket-on-market  show aggregate stats grouped by market     [default: false]
+ --bucket-on-pool    show aggregate stats grouped by pool       [default: true]
+ --bucket-on-algo    show aggregate stats grouped by algorithm  [default: false]
+ --bucket-on-miner   show aggregate stats grouped by miner      [default: false]
+
+logging
+ --show-configuration   log parsing of configuration options
+ --show-records         show individual records
+
+For more information visit https://github.com/hossbeast/autominer
 HELP
   exit 0
 }
@@ -77,96 +141,136 @@ if($opts{version})
   exit 0;
 }
 
+# convert bounds to epoch
+if($opts{"period-trailing"})
+{
+  $opts{"period-from"} = time() - $opts{"period-trailing"};
+}
+
+my $mining_market = '';
+my $mining_pool = '';
 my $mining_miner = '';
 my $mining_algo = '';
-my $unmatched = 0;
+my %buckets;
 
-my $history_dir = "$opts{datadir}/history/$opts{profile}";
-my $wanted = sub {
-  return if $_ eq "." or $_ eq "..";
+# history stream selection tuples
+my %tuples;
+$tuples{"nh-address"} = $opts{"history-nh-address"} if $opts{"history-nh-address"};
+$tuples{"mph-username"} = $opts{"history-mph-username"} if $opts{"history-mph-username"};
+$tuples{worker} = $opts{"history-worker"} if $opts{"history-worker"};
+$tuples{miner} = $opts{"history-miner"} if $opts{"history-miner"};
+$tuples{algo} = $opts{"history-algo"} if $opts{"history-algo"};
+$tuples{market} = $opts{"history-market"} if $opts{"history-market"};
+$tuples{pool} = $opts{"history-pool"} if $opts{"history-pool"};
 
-  # determine whether there was a transition
-  readlink($_) =~ /\/([^\/]+)\/([^\/]+)\/[0-9]+$/;
+if(!%tuples)
+{
+  $tuples{"profile"} = $opts{"history-profile"};
+}
 
-  my $miner = $1;
-  my $algo = $2;
+my $stream_path = stream_get_path_frag($opts{"profile"}, %tuples);
+my $stream_dir = $opts{"history-dir"} . "/$stream_path";
+die "no such history $stream_dir" unless -d $stream_dir;
+my $stream = stream::new($stream_dir, 0xffff);
+
+print("history $stream_path\n");
+if($opts{"period-from"})
+{
+  printf("%16s %17s or %d\n", "period from", POSIX::strftime("%D %T", localtime($opts{"period-from"})), $opts{"period-from"});
+}
+if($opts{"period-to"})
+{
+  printf("%16s %17s or %d\n", "period to", POSIX::strftime("%D %T", localtime($opts{"period-to"})), $opts{"period-to"});
+}
+
+if($opts{"show-records"})
+{
+  print("\nrecords in reverse order\n");
+}
+
+exit unless $$stream{head};
+
+# read the stream in reverse order
+my $x = ring_add($$stream{head}, 1, 0xffff);
+while(1)
+{
+  last if $x == $$stream{tail};
+  $x = ring_sub($x, 1, 0xffff);
+
+  my $text = $stream->read($x);
+  my $record = decode_json($text);
+
+  my $start = $$record{start};
+  my $end = $$record{end};
+
+  next if $opts{"period-to"} && $start > $opts{"period-to"};
+  last if $opts{"period-from"} && $end < $opts{"period-from"};
+
+  my $market = $$record{market};
+  my $pool = $$record{pool};
+  my $miner = $$record{miner};
+  my $algo = $$record{algo};
+
   my $transition = 0;
-  if($mining_miner ne $miner || $mining_algo ne $algo)
+  if($mining_market ne $market || $mining_pool ne $pool || $mining_miner ne $miner || $mining_algo ne $algo)
   {
     $transition = 1;
   }
 
-  return if $opts{transitions} and not $transition;
+  # profit
+  my $actual_profit = $$record{actual_profit} || 0;
+  my $predicted_profit = $$record{predicted_profit};
+  my $profit_delta = $actual_profit - $predicted_profit;
+  my $profit_variance = 0;
+  $profit_variance = $profit_delta / $predicted_profit if $predicted_profit != 0;
+  $profit_variance *= 100;
 
-  my $fh;
-  unless(open($fh, "<$history_dir/$_"))
+  if($opts{"show-records"})
   {
-    $unmatched++;
-    return;
+    printf(" %60s", sprintf("%s/%s/%s/%s", $market, $pool, $miner, $algo));
+    printf(" profit %14.8f (%7.2f%%)", $actual_profit, $profit_variance);
+    print(" <--") if $transition;
+    print("    ") unless $transition;
+    printf(" $stream_dir/%05u", $x);
+    print("\n");
   }
 
-  return unless $fh;
-  my $header = <$fh>;
-  chomp $header if $header;
-  close($fh);
-
-  if(not $header)
+  my $bucket = '';
+  for my $tag (qw|market pool miner algo|)
   {
-    $unmatched++;
-    return;
+    next unless $opts{"bucket-on-$tag"};
+    $bucket .= ' ' if $bucket;
+    $bucket .= "$tag:" . eval('$' . $tag);
   }
 
-  my $re = qr/
-    ^
-    (?:v1.0|v1.1|v1.2)
-    \s+ ([0-9]+)                          # 1 unix timestamp
-    \s+ ([a-zA-Z-_]+)                     # 2 market
-    \s+ (?:[a-z0-9-_]+)\/(?:[a-z0-9-_]+)
-    \s+ ([a-z0-9]+)                       # 3 window
-    \s+ ([0-9.]+)\s+\*                    # 4 speed
-    \s+ ([0-9.]+)\s+=                     # 5 rate
-    \s+ ([0-9.]+)                         # 6 profit
-    $
-  /xi;
-
-  if($header !~ $re)
+  for my $b ($bucket, "ALL")
   {
-    $unmatched++;
-    return;
+    next unless $b;
+    $buckets{$b}{end} = $end unless $buckets{$b}{end};
+    $buckets{$b}{start} = $start;
+    $buckets{$b}{predicted_profit} += $predicted_profit;
+    $buckets{$b}{actual_profit} += $actual_profit;
+    $buckets{$b}{profit_variance} += $profit_variance;
+    $buckets{$b}{records} += 1;
   }
 
-  my $start = $1;
-  my $market = $2;
-  my $window = $3;
-  my $speed = $4;
-  my $rate = $5;
-  my $profit = $6;
-
-  my $mtime = (stat($_))[9];
-
-  printf("%20s", localtime($start)->strftime("%D %T"));
-  printf(" %20s", localtime($mtime)->strftime("%D %T"));
-  printf(" %20s", "$miner/$algo");
-  printf(" %14s", "(no data)") if $speed == 0xffffffff;
-  printf(" %14.8f", $speed) if $speed != 0xffffffff;
-  printf(" * %14.8f", $rate);
-  printf(" = %14s BTC/day", "(unknown)") if $speed == 0xffffffff;
-  printf(" = %14.8f BTC/day", $profit) if $speed != 0xffffffff;
-  printf(" (%3s)", $window);
-  print(" <--") if $transition;
-  print("\n");
-
+  $mining_market = $market;
+  $mining_pool = $pool;
   $mining_miner = $miner;
   $mining_algo = $algo;
-};
-my $preprocess = sub {
-  sort { int($a) <=> int($b) } # increasing order
-  grep { /^[0-9]+$/ } @_
-};
-chdir($history_dir) or die "chdir($history_dir) : $!";
-finddepth({ wanted => $wanted, preprocess => $preprocess }, ".");
+}
 
-if ($unmatched and $verbose)
+for my $b (sort { $b cmp $a } keys %buckets)
 {
-  print("ignored $unmatched records\n")
+  $buckets{$b}{predicted_profit} /= $buckets{$b}{records};
+  $buckets{$b}{actual_profit} /= $buckets{$b}{records};
+  $buckets{$b}{profit_variance} /= $buckets{$b}{records};
+
+  print("\n");
+  printf("bucket $b\n");
+  printf("%16s %17s or %d\n", "period from", POSIX::strftime("%D %T", localtime($buckets{$b}{start})), $buckets{$b}{start});
+  printf("%16s %17s or %d\n", "period to", POSIX::strftime("%D %T", localtime($buckets{$b}{end})), $buckets{$b}{end});
+  printf("%16s %s\n", "period duration", durationstring($buckets{$b}{end} - $buckets{$b}{start}));
+  printf("%16s %d\n", "records", $buckets{$b}{records});
+  printf("%16s actual %14.8f predicted %14.8f variance %6.2f%%\n", "profit", $buckets{$b}{actual_profit}, $buckets{$b}{predicted_profit}, $buckets{$b}{profit_variance});
 }

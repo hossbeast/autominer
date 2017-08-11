@@ -1,4 +1,4 @@
-# Copyright (c) 2017 Todd Freed <todd.freed@gmail.com>
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
 #
 # This file is part of autominer.
 #
@@ -14,25 +14,108 @@
 #
 # You should have received a copy of the GNU General Public License
 
-# payout-address and worker are used to construct the username mining parameter
-#  send mining rewards here
---payout-address <your btc address>
+# directory for storing mining results, including miner benchmarks and profit predictions
+--history-dir /home/todd/.autominer/history
+
+# directory for storing aggregated market and mining stats
+--cache-dir /home/todd/.autominer/cache
+
+# directory for process lockfiles
+--run-dir /tmp/run
+
 # name of this mining rig / worker
-# --worker
-
-# directory for storing benchmark and market rates data
---data-dir "/home/todd/.autominer/data"
-
-# specify which region(s) to mine in
---nicehash-usa
-# --nicehash-eu
+#--worker cryptogold
 
 # comma-separated list of cards to mine on
---cards 0,1
+#  most miners use all cards when this option is omitted
+#--cards 0,1
+
+# how often to re-evaluate mining options, in seconds
+#
+#  This setting is a minimum duration which can be overridden by the mining pool. For example
+#  the nicehash api reports performance with a rolling 5 minute window, so a mining selection
+#  to a nicehash pool is maintained for a minimum of 5 minutes regardless of this setting
+#
+# default : 10 minutes
+--switching-period 600
+
+# minimum predicted increase in profit compared to the current option required for switching
+#  in percentage points
+--switching-threshold 5
+
+# duration, in seconds, of history mining on a miner/algorithm to use as the basis for calculating
+# its hashrate
+# default : 3 hours
+--algo-trailing-window-seconds  10800
+
+# minimum required duration of history mining on a miner/algorithm in order to calculate its hashrate.
+# If a miner/algo has less history than the minimum, it will be preferentially selected for mining.
+# default : 10 minutes
+--algo-trailing-window-minimum  600
+
+# number of switching periods to retain in history - the data behind autominer stats
+#  default: with a 10 minute switching period, this is 50 days
+--history-retention-samples 7200
+
+# boosting is a feedback mechanism from the observed profits of mining a market/pool/miner/algo option to
+# the predictions of future profits mining that same option.
+# default: enabled
+--boost 1
+
+# exclude samples older than the window when calculating the boost factor
+# default: three days
+--boost-trailing-window-seconds  259200
+
+# include only the most recent N samples when calculating the boost factor
+--boost-trailing-window-samples  8
+
+# pad the boost factor calculation with N samples whose variance is zero. The larger the pad, the more the
+# boost factor will tend towards 1.0 (that is, no boost).
+--boost-trailing-window-pad      2
+
+# specify nicehash regions to mine in
+#--nicehash-usa
+#--nicehash-eu
+
+# nicehash bitcoin address - send rewards here
+#--nh-address <your nicehash btc address>
+
+# which pricing method to use for nicehash predictions, one of opportunity|trailing-sma
+#  default: use the opportunity price
+--nh-price-method opportunity
+
+# for price-method trailing-sma, trailing price aggregation window to use, one of s30|m5|m10|m30|h1|h3
+#  default: m5 (trailing 5 minutes)
+--nh-trailing-sma-window m5
+
+# number of 30s market samples to be retained by autominer-nicehash-aggregator
+#  default : one day
+--nh-market-retention-samples 2880
+
+# mine on miningpoolhub pools
+#--miningpoolhub
+
+# your miningpoolhub username
+#--mph-username
+
+# your miningpoolhub api key
+#--mph-apikey
+
+# mine on miningpoolhub selections for at least N seconds
+# default : 30 minutes
+#--mph-switching-period       1800
+
+# exclude pools that havent mined a block in the last N seconds
+# default : 60 minutes
+#--mph-round-duration-limit   3600
 
 # configure paths to miner executables, if they're not in $PATH
-# --ccminer-path /usr/local/bin/ccminer
-# --ccminer-cryptonight-path /usr/local/bin/ccminer-cryptonight
-# --ethminer-path /usr/local/bin/ethminer
-# --nheqminer-cuda-path /usr/local/bin/nheqminer_cuda
-# --sgminer-path /usr/local/bin/sgminer
+#--ccminer-path /usr/local/bin/ccminer
+#--ccminer-cryptonight-path /usr/local/bin/ccminer-cryptonight
+#--ethminer-path /usr/local/bin/ethminer
+#--nheqminer-cuda-path /usr/local/bin/nheqminer_cuda
+#--sgminer-path /usr/local/bin/sgminer
+#--eqm-path /usr/local/bin/eqm
+
+# disable eqm for now, its broken, pending a nicehash update
+--eqm-path /dev/null

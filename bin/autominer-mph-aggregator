@@ -1,0 +1,146 @@
+#!/usr/bin/env perl
+
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
+#
+# This file is part of autominer.
+#
+# autominer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# autominer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+
+use strict;
+use warnings;
+
+use Cwd;
+use File::Basename;
+our $repodir;
+BEGIN { $repodir = dirname(Cwd::realpath("$0/..")) }
+use lib "$repodir/lib";
+override_warn_and_die();
+
+use Time::Piece;
+use Data::Dumper;
+
+use child_manager;
+use config;
+use logger;
+use market::miningpoolhub;
+use release;
+use util;
+use xlinux;
+
+our $verbose = 0;
+our %opts = (
+    'profile' => 'default'
+);
+my %optargs = (
+    'help|h'               => \$opts{help}
+  , 'version|V'            => \$opts{version}
+  , 'verbose|v'            => \$opts{verbose}
+
+  # state
+  , 'cache-dir=s'          => \$opts{"cache-dir"}
+  , 'run-dir=s'            => \$opts{"run-dir"}
+
+  # basic setup
+  , 'profile=s'            => \$opts{profile}
+
+  # miningpoolhub
+  , 'mph-apikey=s'         => \$opts{"mph-apikey"}
+
+  # logging
+  , 'show-configuration!'  => \$opts{"show-configuration"}
+);
+configure(\%optargs, \%opts);
+
+if($opts{help})
+{
+  print <<HELP;
+autominer - an autoswitching miner for linux, version $release::number
+
+ >> BTC donations : 184AtMD3AihYke2bKQD9AXh4Dgzvtr7jhA (hossbeast)
+
+usage: autominer mph-aggregator [options]
+
+ --help                  print this help text
+ --version               print the version number, exit
+ --verbose               print commands as they are run
+
+required
+ --cache-dir <path>   base directory for aggregated market and mining data
+ --run-dir <path>     base directory for process lockfiles
+ --mph-apikey         apikey for your miningpoolhub account
+
+basic setup
+ --profile <name>   separate config file and history
+
+logging
+ --show-configuration   log parsing of configuration options
+
+For more information visit https://github.com/hossbeast/autominer
+HELP
+  exit 0
+}
+if($opts{version})
+{
+  print "autominer-$release::number\n";
+  exit 0;
+}
+
+die "missing required config --mph-apikey" unless $opts{"mph-apikey"};
+
+# obtain an exclusive lock for the region
+my $rundir = sprintf("%s/autominer/aggregator", $opts{"run-dir"});
+mkdirp($rundir);
+
+my $pidfile = "$rundir/mph";
+my $holder = lock_obtain($pidfile);
+die "[$$] $pidfile already locked by $holder" if $holder and $holder != $$;
+
+my $statsdir = $opts{"cache-dir"} . "/mph";
+mkdirp("$statsdir/spool");
+
+# delegate SIG{CHLD}
+child_manager_configure();
+
+my $mph = miningpoolhub::new(%opts);
+
+my $T = time();
+while(1)
+{
+  my %pools;
+  for my $pool (values %miningpoolhub::pools)
+  {
+    my $poolstatus = $mph->getpoolstatus($$pool{name});
+    if($poolstatus)
+    {
+      $pools{$$pool{name}} = $poolstatus;
+    }
+  }
+
+  # save the current stats
+  my $fh = xfhopen(">$statsdir/spool/present");
+  print $fh (tojson(\%pools), "\n");
+  close $fh;
+  rename("$statsdir/spool/present", "$statsdir/present");
+
+  logf("wrote %s/present with pool stats for %d mining pools"
+    , $statsdir
+    , scalar keys %pools
+  );
+
+  # refresh every 7 minutes
+  my $remaining = (60 * 7) - (time() - $T);
+  $remaining = (60 * 7) if $remaining < 2;
+  sleep($remaining);
+
+  $T = time();
+}

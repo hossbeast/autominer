@@ -1,53 +1,62 @@
 #!/usr/bin/env perl
 
-# Copyright (c) 2017 Todd Freed <todd.freed@gmail.com>
-# 
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
+#
 # This file is part of autominer.
-# 
+#
 # autominer is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # autominer is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 
 use strict;
 use warnings;
 
-use File::Basename;
 use Cwd;
+use File::Basename;
 our $repodir;
 BEGIN { $repodir = dirname(Cwd::realpath("$0/..")) }
 use lib "$repodir/lib";
-use util;
-use release;
 override_warn_and_die();
 
 use JSON::XS;
+
 use config;
+use release;
+use util;
 
 our $verbose = 0;
 our %opts = (
-    'datadir'       => $ENV{HOME} . "/.autominer/data"
+    'profile'       => 'default'
   , 'sort'          => 'h3'
-  , 'profile'       => 'default'
 );
 my %optargs = (
-    'help|h'        => \$opts{help}
-  , 'version|V'     => \$opts{version}
-  , 'verbose|v'     => \$opts{verbose}
+    'help|h'              => \$opts{help}
+  , 'version|V'           => \$opts{version}
+  , 'verbose|v'           => \$opts{verbose}
 
-  , 'data-dir=s'    => \$opts{datadir}
-  , 'profile=s'     => \$opts{profile}
-  , 'region=s'      => \$opts{region}
+  # state
+  , 'cache-dir=s'         => \$opts{"cache-dir"}
 
-  , 'sort|s=s'      => \$opts{sort}
-  , 'reverse'       => \$opts{reverse}
+  # basic setup
+  , 'profile=s'           => \$opts{profile}
+
+  # nicehash
+  , 'region=s'            => \$opts{region}
+
+  # display
+  , 'sort|s=s'            => \$opts{sort}
+  , 'reverse'             => \$opts{reverse}
+
+  # logging
+  , 'show-configuration!' => \$opts{"show-configuration"}
 );
 configure(\%optargs, \%opts);
 
@@ -58,18 +67,21 @@ autominer - an autoswitching miner for linux, version $release::number
 
  >> BTC donations : 184AtMD3AihYke2bKQD9AXh4Dgzvtr7jhA (hossbeast)
 
-usage: autominer rates [options] [miner/algo]
+usage: autominer nh-rates [options] [miner/algo]
 
- --version
- --help
- --verbose
+ --help       print this help text
+ --version    print the version number, exit
+ --verbose    print commands as they are run
 
 required
- --region usa|eu       nicehash region (nicehash calls this a location)
+ --region usa|eu   nicehash region (nicehash calls this a location)
 
-optional
+display
  --sort s30|m1|m5|m10|h1|h3
  --reverse
+
+logging
+ --show-configuration   log parsing of configuration options
 
 For more information visit https://github.com/hossbeast/autominer
 HELP
@@ -88,12 +100,18 @@ die "unknown region $opts{region}" unless $opts{region} =~ /usa|eu/;
 my %rates;
 for my $period (qw|s30 m1 m5 m10 h1 h3|)
 {
-  open(my $fh, "<$opts{datadir}/rates/nicehash-$opts{region}/$period") or die $!;
+  open(my $fh, sprintf("<%s/nicehash-%s/rates/%s", $opts{"cache-dir"}, $opts{region}, $period)) or die $!;
   my $text = do { local $/ = undef ; <$fh> };
   close $fh;
 
   $rates{$period} = decode_json($text);
 }
+
+my %opportuniities;
+open(my $fh, sprintf("<%s/nicehash-%s/opportunities/present", $opts{"cache-dir"}, $opts{region})) or die $!;
+my $text = do { local $/ = undef ; <$fh> };
+close $fh;
+my $opportunities = decode_json($text);
 
 # compute percentage deltas
 my @algos = keys %{$rates{s30}};
@@ -112,10 +130,18 @@ my $sort_mod = 1;
 $sort_mod = -1 if $opts{reverse};
 @algos = sort { ($pct_deltas{$b} <=> $pct_deltas{$a}) * $sort_mod } @algos;
 
-printf("%20s %14s %14s %14s %14s %14s %14s\n", "", qw|h3 h1 m10 m5 m1 s30|);
+printf("%16s", "");
+for my $c (qw|h3 h1 m10 m5 m1|)
+{
+  printf(" [%14s]", $c) if ($opts{sort} eq $c);
+  printf("  %14s ", $c) if ($opts{sort} ne $c);
+}
+printf(" [%14s]", "s30");
+printf("  %8s %14s\n", "delta", "opportunity");
+
 for my $algo (@algos)
 {
-  printf("%20s %14.8f %14.8f %14.8f %14.8f %14.8f %14.8f %8s\n"
+  printf("%16s  %14.8f   %14.8f   %14.8f   %14.8f   %14.8f   %14.8f   %8s %14.8f\n"
     , $algo
     , $rates{h3}{$algo}
     , $rates{h1}{$algo}
@@ -124,5 +150,6 @@ for my $algo (@algos)
     , $rates{m1}{$algo}
     , $rates{s30}{$algo}
     , sprintf("%%%6.2f", $pct_deltas{$algo})
+    , $$opportunities{$algo}{price}
   );
 }

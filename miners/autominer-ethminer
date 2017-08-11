@@ -1,19 +1,19 @@
 #!/usr/bin/env perl
 
-# Copyright (c) 2017 Todd Freed <todd.freed@gmail.com>
-# 
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
+#
 # This file is part of autominer.
-# 
+#
 # autominer is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # autominer is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 
 #
@@ -38,18 +38,26 @@ elsif($ARGV[0] eq "mine")
 {
   my @cmd = (
       "ethminer"
-    , "-SP" , "2"
-    , "-U"
-    , "-S", "$ENV{AUTOMINER_ALGO}.$ENV{AUTOMINER_NICEHASH_REGION}.nicehash.com:$ENV{AUTOMINER_PORT}"
+    , "-U"          # CUDA
+    , "-S", "$ENV{AUTOMINER_URL_AUTHORITY}"
     , "-O", "$ENV{AUTOMINER_USERNAME}"
   );
 
-  if(defined $ENV{AUTOMINER_CARDS_SPACES})
+  if($ENV{AUTOMINER_MARKET} eq "miningpoolhub")
   {
-    push @cmd, "--cuda-devices", "$ENV{AUTOMINER_CARDS_SPACES}";
+    push @cmd, "-SP", "0"
+  }
+  elsif($ENV{AUTOMINER_MARKET} =~ /nicehash/)
+  {
+    push @cmd, "-SP", "2"
   }
 
-  print STDERR (" >> ethminer : @cmd\n");
+  if(defined $ENV{AUTOMINER_CARDS_SPACES})
+  {
+    push @cmd, "--cuda-devices", split(/ /, "$ENV{AUTOMINER_CARDS_SPACES}");
+  }
+
+  print STDERR (" >> $$ : @cmd\n") if $ENV{AUTOMINER_VERBOSE};
 
   POSIX::dup2(1, 2) or die;
   exec { $cmd[0] } @cmd;
@@ -60,8 +68,8 @@ elsif($ARGV[0] eq "perf")
   {
     chomp $line;
 
-    # m  21:55:47|ethminer  Mining on PoWhash #90319290 : 30.71MH/s [A0+0:R0+0:F0]
-    if($line =~ /Mining on PoWhash.*: ([0-9.]+)(k|m|g|t|p)?h\/s/i)
+    # m  23:24:09|ethminer  Speed  67.36 Mh/s    gpu/0 34.73  gpu/1 32.63  [A1+0:R0+0:F0] Time: 00:00
+    if($line =~ /ethminer.*Speed.* ([0-9]+.[0-9]+).*(k|m|g|t|p)?h\/s/i)
     {
       my $rate = $1;
       my $units = $2 || '';
