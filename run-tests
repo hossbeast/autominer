@@ -1,0 +1,14 @@
+#!/usr/bin/env perl
+
+use TAP::Harness;
+
+use strict;
+use warnings;
+
+opendir DH, "test" or die "opendir(test) : $!";
+my @tests =
+  map { "test/$_" }
+  grep { $_ ne '.' and $_ ne '..' and $_ ne 'lib' }
+readdir(DH);
+
+TAP::Harness->new()->runtests(@tests)
