@@ -25,7 +25,6 @@ require Exporter;
 our @ISA = qw|Exporter|;
 our @EXPORT = (
     qw|run killfast curl filter override_warn_and_die lock_obtain|
-  , qw|ring_sub ring_add|
 );
 
 use File::Temp;
@@ -212,20 +211,6 @@ sub filter
 
   POSIX::close($out_reader);
   $output;
-}
-
-sub ring_add
-{
-  my ($a, $b, $ring) = @_;
-
-  ($a + $b) % $ring
-}
-
-sub ring_sub
-{
-  my ($a, $b, $ring) = @_;
-
-  ($a - $b) % $ring
 }
 
 sub xopen
