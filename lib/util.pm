@@ -25,6 +25,7 @@ require Exporter;
 our @ISA = qw|Exporter|;
 our @EXPORT = (
     qw|run killfast curl filter override_warn_and_die lock_obtain|
+  , qw|average|
 );
 
 use File::Temp;
@@ -268,6 +269,15 @@ sub lock_obtain
   }
 
   return 0;
+}
+
+sub average
+{
+  return 0 if $#_ == -1;
+
+  my $total = 0;
+  map { $total += $_ } @_;
+  return $total / ($#_ + 1);
 }
 
 1
