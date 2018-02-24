@@ -132,6 +132,7 @@ sub miner_env_setup
   $ENV{AUTOMINER_ETHMINER_PATH} = $::opts{ethminer_path};
   $ENV{AUTOMINER_NHEQMINER_CUDA_PATH} = $::opts{nheqminer_cuda_path};
   $ENV{AUTOMINER_SGMINER_PATH} = $::opts{sgminer_path};
+  $ENV{AUTOMINER_EQM_PATH} = $::opts{eqm_path};
 
   my @env;
   while(my($k, $v) = each %ENV)

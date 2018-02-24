@@ -52,6 +52,7 @@ our %opts = (
   , 'ethminer_path'             => 'ethminer'
   , 'nheqminer_cuda_path'       => 'nheqminer_cuda'
   , 'sgminer_path'              => 'sgminer'
+  , 'eqm_path'                  => 'eqm'
 );
 my %optargs = (
     'help|h'            => \$opts{help}
@@ -76,6 +77,7 @@ my %optargs = (
   , 'ethminer-path=s'             => \$opts{ethminer_path}
   , 'nheqminer-cuda-path=s'       => \$opts{nheqminer_cuda_path}
   , 'sgminer-path=s'              => \$opts{sgminer_path}
+  , 'eqm-path=s'                  => \$opts{eqm_path}
 );
 configure(\%optargs, \%opts);
 
@@ -115,6 +117,7 @@ optional - miner executables
  --ethminer-path <path>             path to the ethminer executable
  --nheqminer-cuda-path <path>       path to the nheqminer_cuda executable
  --sgminer-path <path>              path to the sgminer executable
+ --eqm-path <path>                  path to the eqm executable
 
 For more information visit https://github.com/hossbeast/autominer
 HELP

@@ -1,0 +1,78 @@
+#!/usr/bin/env perl
+
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
+#
+# This file is part of autominer.
+#
+# autominer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# autominer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+
+#
+# autominer wrapper for https://www.nicehash.com/tools/eqm_v1.0.4c_Linux_Ubuntu16.zip
+#
+
+use strict;
+use warnings;
+
+use POSIX;
+
+if($ARGV[0] eq "configured")
+{
+  if(-x $ENV{AUTOMINER_EQM_PATH})
+  {
+    print "yes\n"
+  }
+}
+elsif($ARGV[0] eq "algos")
+{
+  print("equihash\n");
+}
+elsif($ARGV[0] eq "mine")
+{
+  my $intensity = 25;
+
+  my @cmd = (
+      "$ENV{AUTOMINER_EQM_PATH}"
+    , "-l", "$ENV{AUTOMINER_NICEHASH_REGION}"
+    , "-u", "$ENV{AUTOMINER_NH_ADDRESS}"
+    , "-w", "$ENV{AUTOMINER_WORKER}"
+  );
+
+  if(defined $ENV{AUTOMINER_CARDS_SPACES})
+  {
+    push @cmd, "-cd", split(/ /, "$ENV{AUTOMINER_CARDS_SPACES}");
+  }
+
+  print STDERR (" >> $$ : @cmd\n") if $ENV{AUTOMINER_VERBOSE};
+
+  # eqm writes benchmark data to stderr
+  POSIX::dup2(1, 2) or die;
+
+  exec { $cmd[0] } @cmd;
+}
+elsif($ARGV[0] eq "perf")
+{
+  while(my $line = <STDIN>)
+  {
+    chomp $line;
+
+    # [21:41:34][0x00007fef827db240] Speed [15 sec]: 504.006 I/s, 953.507 Sols/s
+    # [20:42:14][0x00007fbf94468200][info] =====> 546.947 I/s, 1023.48 Sols/s
+    if($line =~ /=====.*, ([0-9.]+) Sols\/s/i)
+    {
+      my $rate = $1;
+
+      my $record = sprintf("%10u %s %s/s\n", time() - $^T, $rate, "s");
+      POSIX::write(1, $record, length($record));
+    }
+  }
+}
