@@ -1,0 +1,185 @@
+#!/usr/bin/env perl
+
+# Copyright (c) 2017-2018 Todd Freed <todd.freed@gmail.com>
+#
+# This file is part of autominer.
+#
+# autominer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# autominer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+
+use strict;
+use warnings;
+
+use Cwd;
+use File::Basename;
+our $repodir;
+BEGIN { $repodir = dirname(Cwd::realpath("$0/..")) }
+use lib "$repodir/lib";
+override_warn_and_die();
+
+use JSON::XS;
+use Time::Piece;
+
+use child_commands;
+use child_manager;
+use config;
+use logger;
+use release;
+use ring;
+use util;
+use xlinux;
+
+our $verbose = 0;
+our %opts = (
+    'profile' => 'default'
+);
+my %optargs = (
+    'help|h'               => \$opts{help}
+  , 'version|V'            => \$opts{version}
+  , 'verbose|v'            => \$opts{verbose}
+
+  # state
+  , 'cache-dir=s'          => \$opts{"cache-dir"}
+  , 'run-dir=s'            => \$opts{"run-dir"}
+
+  # basic setup
+  , 'profile=s'            => \$opts{profile}
+
+  # logging
+  , 'show-configuration!'  => \$opts{"show-configuration"}
+);
+configure(\%optargs, \%opts);
+
+if($opts{help})
+{
+  print <<HELP;
+autominer - an autoswitching miner for linux, version $release::number
+
+ >> BTC donations : 184AtMD3AihYke2bKQD9AXh4Dgzvtr7jhA (hossbeast)
+
+usage: autominer coinstats-aggregator [options]
+
+ --help      print this help text
+ --version   print the version number, exit
+ --verbose   print commands as they are run
+
+required
+ --cache-dir <path>   base directory for aggregated market and mining data
+ --run-dir <path>     base directory for process lockfiles
+
+basic setup
+ --profile <name>     separate config file and history
+
+logging
+ --show-configuration   log parsing of configuration options
+
+For more information visit https://github.com/hossbeast/autominer
+HELP
+  exit 0
+}
+if($opts{version})
+{
+  print "autominer-$release::number\n";
+  exit 0;
+}
+
+# obtain an exclusive lock for the region
+my $rundir = sprintf("%s/autominer/aggregator", $opts{"run-dir"});
+mkdirp($rundir);
+
+my $pidfile = "$rundir/coinstats";
+my $holder = lock_obtain($pidfile);
+die "[$$] $pidfile already locked by $holder" if $holder and $holder != $$;
+
+# delegate SIG{CHLD}
+child_manager_configure();
+
+my $statsdir = $opts{"cache-dir"} . "/coinstats";
+mkdirp("$statsdir/spool");
+
+my $T = time();
+while(1)
+{
+  my %coins;
+
+  # general data on the top 50 coins
+  my $rest = rest_prep("https://api.coinmarketcap.com/v1/ticker/?limit=50");
+  my $market_stats;
+  while(not defined $market_stats && $$rest{sleep} < 60)
+  {
+    $market_stats = rest_get($rest);
+  }
+
+  if($market_stats)
+  {
+    for my $stats (@$market_stats)
+    {
+      my $coin = $$stats{symbol};
+      while(my($k, $v) = each %$stats)
+      {
+        $coins{$coin}{$k} = $v;
+      }
+    }
+  }
+
+  # additional data on the top coins for mining
+  $rest = rest_prep("https://whattomine.com/coins.json");
+  my $mining_coins;
+  while(not defined $mining_coins && $$rest{sleep} < 60)
+  {
+    $mining_coins = rest_get($rest);
+  }
+
+  if($mining_coins)
+  {
+    for my $stats (values %{$$mining_coins{coins}})
+    {
+      my $coin = $$stats{tag};
+
+      # ignore nicehash data from whattomine, see nicehash-aggregator
+      next if $coin eq "NICEHASH";
+
+      push @{$coins{$coin}{mining}}, {
+          difficulty => $$stats{difficulty}
+        , nethash => $$stats{nethash} / 1000 / 1000 # normalize to mh/s
+        , algorithm => lc($$stats{algorithm})
+        , blocktime => $$stats{block_time}
+        , blockreward => $$stats{block_reward}
+      };
+
+      # prefer exchange rate from coinmarketcap
+      unless(exists $coins{$coin}{price_btc})
+      {
+        $coins{$coin}{price_btc} = $$stats{exchange_rate}
+      }
+    }
+  }
+
+  # save the current coinstats
+  my $fh = xfhopen(">$statsdir/spool/present");
+  print $fh (tojson(\%coins), "\n");
+  close $fh;
+  rename("$statsdir/spool/present", "$statsdir/present");
+
+  logf("wrote %s/present with market stats for %d coins and %d mining pools"
+    , $statsdir
+    , $market_stats ? $#$market_stats + 1 : 0
+    , $mining_coins ? scalar keys %{$$mining_coins{coins}} : 0
+  );
+
+  # refresh every 10 minutes
+  my $remaining = (60 * 10) - (time() - $T);
+  $remaining = (60 * 10) if $remaining < 2;
+  sleep($remaining);
+
+  $T = time();
+}
