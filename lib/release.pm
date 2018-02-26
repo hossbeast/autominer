@@ -16,6 +16,6 @@
 
 package release;
 
-our $number = "v1.2";
+our $number = "v2.0";
 
 1
