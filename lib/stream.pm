@@ -114,7 +114,7 @@ sub _head_sync
     $$self{tail} = ring_add($$self{tail}, 1, 0xffff);
     $self->_link_tail_edge();
   }
-  elsif(ring_sub($$self{head}, $$self{tail}, 0xffff) <= $edge_links)
+  elsif(ring_sub($$self{head}, $$self{tail}, 0xffff) < $edge_links)
   {
     $self->_link_tail_edge();
   }
