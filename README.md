@@ -176,3 +176,7 @@ autominer stats
 * perl (http://www.perl.org)
 * JSON::XS (http://search.cpan.org/~mlehmann/JSON-XS-3.03/XS.pm)
 * curl (https://curl.haxx.se)
+
+# Discuss
+
+* bitcointalk thread: https://bitcointalk.org/index.php?topic=2023598.0
