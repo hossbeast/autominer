@@ -500,7 +500,7 @@ while(!$quit)
   $option->start();
 
   my $switching_period = $$option{market}->switching_period() || $opts{"switching-period"};
-  my $results = {};
+  my $results = { profit => 0 };
   OPTION: while((time() - $$option{start}) < $switching_period)
   {
     my $interval = $$option{market}->get_mining_interval($option);
