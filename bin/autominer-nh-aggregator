@@ -122,11 +122,11 @@ my %slices;         # {m1} => [ { algo => price, algo => price } ]
 my %sums;           # {m1}{algo} => sum
 my $ingestion_counter = 0;
 
-my $ratesdir = $opts{"cache-dir"} . "/nh-$opts{region}/rates";
+my $ratesdir = $opts{"cache-dir"} . "/nicehash-$opts{region}/rates";
 mkdirp("$ratesdir/spool");
 mkdirp("$ratesdir/samples");
 
-my $opportunitiesdir = $opts{"cache-dir"} . "/nh-$opts{region}/opportunities";
+my $opportunitiesdir = $opts{"cache-dir"} . "/nicehash-$opts{region}/opportunities";
 mkdirp("$opportunitiesdir/spool");
 
 my $samplesdir = "$ratesdir/samples";
