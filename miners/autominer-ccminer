@@ -62,8 +62,11 @@ elsif($ARGV[0] eq "algos")
 elsif($ARGV[0] eq "mine")
 {
   my $intensity = 25;
+
+  # prevent out-of-memory errors
+  $intensity = 22 if $ENV{AUTOMINER_ALGO} eq "neoscrypt";
   $intensity = 22 if $ENV{AUTOMINER_ALGO} eq "lyra2rev2";
-  $intensity = 20 if $ENV{AUTOMINER_ALGO} eq "x11"; # prevents out-of-memory errors
+  $intensity = 20 if $ENV{AUTOMINER_ALGO} eq "x11";
   $intensity = 20 if $ENV{AUTOMINER_ALGO} eq "x13";
   $intensity = 20 if $ENV{AUTOMINER_ALGO} eq "x15";
 

@@ -33,80 +33,48 @@ use util;
 
 # nicehash region config
 our %regions = (
-    "eu" =>       { code => 0 }
-  , "usa" =>      { code => 1 }
+    "eu" =>    { code => 0 }
+  , "usa" =>   { code => 1 }
+  , "hk" =>    { code => 2 }
+  , "jp" =>    { code => 3 }
 );
 
-our %regions_by_market = (
-    "nicehash-eu"   => "eu"
-  , "nicehash-usa"  => "usa"
-);
-
-# nicehash regions by number
-our %regions_by_number = (
-    0 => "eu"
-  , 1 => "usa"
-);
-
+# ports from https://www.nicehash.com/cpu-gpu-mining
+# units from https://www.nicehash.com/marketplace
 our %algos = (
-    "axiom" =>          { code => 13 , units => 'KH/s'  , port => 3346 }
-  , "blake256r14" =>    { code => 17 , units => 'TH/s'  , port => 3350 }
-  , "blake256r8" =>     { code => 16 , units => 'TH/s'  , port => 3349 }
-  , "blake256r8vnl" =>  { code => 18 , units => 'TH/s'  , port => 3351 }
-  , "blake2s" =>        { code => 28 , units => 'TH/s'  , port => 3361 }
-  , "cryptonight" =>    { code => 22 , units => 'MH/s'  , port => 3355 }
-  , "daggerhashimoto" =>{ code => 20 , units => 'GH/s'  , port => 3353 }
-  , "decred" =>         { code => 21 , units => 'TH/s'  , port => 3354 }
-  , "equihash" =>       { code => 24 , units => 'MSol/s', port => 3357 }
-  , "hodl" =>           { code => 19 , units => 'KH/s'  , port => 3352 }
-  , "keccak" =>         { code => 5  , units => 'TH/s'  , port => 3338 }
-  , "lbry" =>           { code => 23 , units => 'TH/s'  , port => 3356 }
-# , "lyra2re" =>        { code => 9  , units => 'GH/s'  , port => 3342 } out of order
-  , "lyra2rev2" =>      { code => 14 , units => 'TH/s'  , port => 3347 }
-  , "neoscrypt" =>      { code => 8  , units => 'GH/s'  , port => 3341 }
-  , "nist5" =>          { code => 7  , units => 'GH/s'  , port => 3340 }
-  , "pascal" =>         { code => 25 , units => 'TH/s'  , port => 3358 }
-  , "quark" =>          { code => 12 , units => 'TH/s'  , port => 3345 }
-  , "qubit" =>          { code => 11 , units => 'TH/s'  , port => 3344 }
-  , "sha256" =>         { code => 1  , units => 'PH/s'  , port => 3334 }
-  , "sia" =>            { code => 27 , units => 'TH/s'  , port => 3360 }
-  , "x11" =>            { code => 3  , units => 'TH/s'  , port => 3336 }
-  , "x11gost" =>        { code => 26 , units => 'GH/s'  , port => 3359 }
-  , "x13" =>            { code => 4  , units => 'GH/s'  , port => 3337 }
-  , "x15" =>            { code => 6  , units => 'GH/s'  , port => 3339 }
-  , "scrypt" =>         { code => 0  , units => 'TH/s'  , port => 3333 }
-);
-
-our %algos_by_number = (
-    0 =>  "scrypt"
-  , 1 =>  "sha256"
-  , 2 =>  "scryptnf"
-  , 3 =>  "x11"
-  , 4 =>  "x13"
-  , 5 =>  "keccak"
-  , 6 =>  "x15"
-  , 7 =>  "nist5"
-  , 8 =>  "neoscrypt"
-  , 9 =>  "lyra2re"
-  , 10 => "whirlpoolx"
-  , 11 => "qubit"
-  , 12 => "quark"
-  , 13 => "axiom"
-  , 14 => "lyra2rev2"
-  , 15 => "scryptjanenf16"
-  , 16 => "blake256r8"
-  , 17 => "blake256r14"
-  , 18 => "blake256r8vnl"
-  , 19 => "hodl"
-  , 20 => "daggerhashimoto"
-  , 21 => "decred"
-  , 22 => "cryptonight"
-  , 23 => "lbry"
-  , 24 => "equihash"
-  , 25 => "pascal"
-  , 26 => "x11gost"
-  , 27 => "sia"
-  , 28 => "blake2s"
+    "axiom" =>              { code => 13 , units => 'KH/s'  , port => 3346 }
+  , "blake256r14" =>        { code => 17 , units => 'TH/s'  , port => 3350 }
+  , "blake256r8" =>         { code => 16 , units => 'TH/s'  , port => 3349 }
+  , "blake256r8vnl" =>      { code => 18 , units => 'TH/s'  , port => 3351 }
+  , "blake2s" =>            { code => 28 , units => 'TH/s'  , port => 3361 }
+  , "cryptonight" =>        { code => 22 , units => 'MH/s'  , port => 3355 }
+  , "cryptonightheavy" =>   { code => 31 , units => 'MH/s'  , port => 3364 }
+  , "cryptonightv7" =>      { code => 22 , units => 'MH/s'  , port => 3355 }
+  , "daggerhashimoto" =>    { code => 20 , units => 'GH/s'  , port => 3353 }
+  , "decred" =>             { code => 21 , units => 'TH/s'  , port => 3354 }
+  , "equihash" =>           { code => 24 , units => 'MSol/s', port => 3357 }
+  , "hodl" =>               { code => 19 , units => 'KH/s'  , port => 3352 }
+  , "keccak" =>             { code => 5  , units => 'TH/s'  , port => 3338 }
+  , "lbry" =>               { code => 23 , units => 'TH/s'  , port => 3356 }
+  , "lyra2re" =>            { code => 9  , units => 'GH/s'  , port => 3342 }
+  , "lyra2rev2" =>          { code => 14 , units => 'TH/s'  , port => 3347 }
+  , "lyra2z"  =>            { code => 32 , units => 'GH/s'  , port => 3365 }
+  , "neoscrypt" =>          { code => 8  , units => 'GH/s'  , port => 3341 }
+  , "nist5" =>              { code => 7  , units => 'TH/s'  , port => 3340 }
+  , "pascal" =>             { code => 25 , units => 'TH/s'  , port => 3358 }
+  , "quark" =>              { code => 12 , units => 'TH/s'  , port => 3345 }
+  , "qubit" =>              { code => 11 , units => 'TH/s'  , port => 3344 }
+  , "scrypt" =>             { code => 0  , units => 'TH/s'  , port => 3333 }
+  , "scryptjanenf16" =>     { code => 15 , units => 'MH/s'  , port => 3348 }
+  , "scryptnf" =>           { code => 2  , units => 'GH/s'  , port => 3335 }
+  , "sha256" =>             { code => 1  , units => 'PH/s'  , port => 3334 }
+  , "sia" =>                { code => 27 , units => 'TH/s'  , port => 3360 }
+  , "skunk" =>              { code => 29 , units => 'GH/s'  , port => 3362 }
+  , "whirlpoolx" =>         { code => 10 , units => 'GH/s'  , port => 3343 }
+  , "x11" =>                { code => 3  , units => 'TH/s'  , port => 3336 }
+  , "x11gost" =>            { code => 26 , units => 'GH/s'  , port => 3359 }
+  , "x13" =>                { code => 4  , units => 'TH/s'  , port => 3337 }
+  , "x15" =>                { code => 6  , units => 'GH/s'  , port => 3339 }
 );
 
 sub normalize_algo_price

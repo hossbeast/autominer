@@ -111,6 +111,8 @@ my %optargs = (
   # nicehash
   , 'nicehash-usa!'                   => \$opts{"nicehash-usa"}
   , 'nicehash-eu!'                    => \$opts{"nicehash-eu"}
+  , 'nicehash-hk!'                    => \$opts{"nicehash-hk"}
+  , 'nicehash-jp!'                    => \$opts{"nicehash-jp"}
   , 'nh-address=s'                    => \$opts{"nh-address"}
   , 'nh-switching-period=i'           => \$opts{"nh-switching-period"}
   , 'nh-price-method=s'               => \$opts{"nh-price-method"}
@@ -174,6 +176,8 @@ boosting
 nicehash
  --nicehash-usa                   consider mining algos on nicehash.usa
  --nicehash-eu                    consider mining algos on nicehash.eu
+ --nicehash-hk                    consider mining algos on nicehash.hk
+ --nicehash-jp                    consider mining algos on nicehash.jp
  --nh-address <address>           nicehash address - where to send rewards
  --nh-price-method opportunity    predict nicehash profits using the opportunity price
  --nh-price-method trailing-sma   predict nicehash profits using the use trailing average price paid
@@ -218,7 +222,7 @@ die "missing required config --cache-dir" unless $opts{"cache-dir"};
 die "missing required config --history-dir" unless $opts{"history-dir"};
 die "missing required config --cards" unless defined $opts{"comma-cards"};
 die "missing required config --history-retention-samples" unless $opts{"history-retention-samples"};
-if($opts{"nicehash-eu"} || $opts{"nicehash-eu"})
+if($opts{"nicehash-eu"} || $opts{"nicehash-eu"} || $opts{"nicehash-hk"} || $opts{"nicehash-jp"})
 {
   die "missing required config --nh-address" unless $opts{"nh-address"};
   die "missing required config --nh-price-method" unless $opts{"nh-price-method"};
@@ -286,7 +290,7 @@ sub load_coinstats
 }
 
 # spawn aggregators if they are not already running
-for my $agg_args (["nh", "--region", "usa"], ["nh", "--region", "eu"], ["coinstats"], ["mph"])
+for my $agg_args (["nh", "--region", "usa"], ["nh", "--region", "eu"], ["nh", "--region", "hk"], ["nh", "--region", "jp"], ["coinstats"], ["mph"])
 {
   my $source = shift @$agg_args;
   my @args = @$agg_args;

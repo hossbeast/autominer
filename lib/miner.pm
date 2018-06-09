@@ -171,7 +171,7 @@ sub miner_env_setup
   $params{AUTOMINER_CARDS_SPACES} = $::opts{"space-cards"};
   $params{AUTOMINER_CARDS_COMMAS} = $::opts{"comma-cards"};
   $params{AUTOMINER_PROFILE} = $::opts{profile};
-  $params{AUTOMINER_VERBOSE} = $::opts{verbose};
+  $params{AUTOMINER_VERBOSE} = $::opts{"show-miner-output"};
 
   if($option)
   {

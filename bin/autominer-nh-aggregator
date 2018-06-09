@@ -80,7 +80,7 @@ usage: autominer nh-aggregator [options]
 required
  --cache-dir <path>             locate market pricing samples at <dir>
  --run-dir <path>               base directory for process lockfiles
- --region usa|eu                nicehash region (nicehash calls this a location)
+ --region usa|eu|hk|jp          nicehash region (nicehash calls this a location)
  --nh-market-samples-retention  number of 30s market samples to retain
 
 basic setup
@@ -102,7 +102,7 @@ if($opts{version})
 die "missing required config --run-dir" unless $opts{"run-dir"};
 die "missing required config --cache-dir" unless $opts{"cache-dir"};
 die "missing required config --region" unless $opts{region};
-die "unknown region $opts{region}" unless $opts{region} =~ /^usa|eu$/;
+die "unknown region $opts{region}" unless $opts{region} =~ /^usa|eu|hk|jp$/;
 die "missing required config --nh-market-samples-retention" unless $opts{"nh-market-samples-retention"};
 
 # obtain an exclusive lock for the region

@@ -41,6 +41,14 @@ sub markets_load
   {
     push @markets, nicehash::new(region => 'eu', %args);
   }
+  if($args{"nicehash-hk"})
+  {
+    push @markets, nicehash::new(region => 'hk', %args);
+  }
+  if($args{"nicehash-jp"})
+  {
+    push @markets, nicehash::new(region => 'jp', %args);
+  }
   if($args{miningpoolhub})
   {
     push @markets, miningpoolhub::new(%args);
