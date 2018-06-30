@@ -8,7 +8,7 @@ use warnings;
 opendir DH, "test" or die "opendir(test) : $!";
 my @tests =
   map { "test/$_" }
-  grep { $_ ne '.' and $_ ne '..' and $_ ne 'lib' }
+  grep { $_ ne '.' and $_ ne '..' and $_ ne 'lib' and $_ ne 'README.md' }
 readdir(DH);
 
 TAP::Harness->new()->runtests(@tests)
