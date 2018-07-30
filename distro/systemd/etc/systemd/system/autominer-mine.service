@@ -1,0 +1,42 @@
+# Copyright (c) 2018 Todd Freed <todd.freed@gmail.com>
+#
+# This file is part of autominer.
+#
+# autominer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# autominer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+#
+
+#
+# systemd unit file for running autominer as a system service
+#
+# installation
+#
+# 1. install the unit fle
+#  % sudo mkdir -p /etc/systemd/system
+#  % sudo ln -vfs ~/autominer/distro/systemd/etc/systemd/system/autominer-mine.service /etc/systemd/system/
+#
+# 2. enable the unit
+#  % sudo systemctl enable autominer-mine
+#
+
+[Unit]
+Description=autominer miner
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/autominer
+Environment="HOME=/home/todd"
+User=todd
+
+[Install]
+WantedBy=default.target

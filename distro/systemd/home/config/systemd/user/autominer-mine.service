@@ -1,0 +1,41 @@
+# Copyright (c) 2018 Todd Freed <todd.freed@gmail.com>
+#
+# This file is part of autominer.
+#
+# autominer is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# autominer is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+#
+
+#
+# systemd unit file for running autominer as a user service
+#
+# installation
+#
+# 1. enable the user systemd user instance to start on boot
+#  % loginctl enable-linger
+#
+# 2. install the unit fle
+#  % mkdir -p ~/.config/systemd/user
+#  % ln -vfs ~/autominer/distro/systemd/home/config/systemd/user/autominer-mine.service ~/.config/systemd/user/
+#
+# 3. enable the unit
+#  % systemctl --user enable autominer-mine
+#
+
+[Unit]
+Description=autominer miner
+
+[Service]
+ExecStart=/usr/local/bin/autominer
+
+[Install]
+WantedBy=default.target
