@@ -245,7 +245,7 @@ if($opts{"boost"})
 
 # ensure state directories exist
 mkdirp($opts{"cache-dir"});
-mkdirp($opts{"history-dir"});
+mkdirp($opts{"history-dir"} . "/profile/" . $opts{"profile"});
 mkdirp($opts{"run-dir"} . "/autominer-aggregator");
 
 # delegate SIG{CHLD}
