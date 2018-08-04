@@ -111,10 +111,10 @@ profile, so that you can distinguish the mining histories for each profile, with
 ````
 # create per-profile configs, set the --worker parameter
 cp ~/.autominer/config ~/.autominer/profile/card-zero/config
-vi ~/.autominer/profile/cardo-zero/config
+vi ~/.autominer/profile/card-zero/config
 
 cp ~/.autominer/config ~/.autominer/profile/card-one/config
-vi ~/.autominer/profile/cardo-one/config
+vi ~/.autominer/profile/card-one/config
 ````
 
 In addition, you may want to the various pricing aggregators separately from the autominer process,
