@@ -105,7 +105,7 @@ my $pidfile = "$rundir/mph";
 my $holder = lock_obtain($pidfile);
 die "[$$] $pidfile already locked by $holder" if $holder and $holder != $$;
 
-my $statsdir = $opts{"cache-dir"} . "/mph";
+my $statsdir = $opts{"cache-dir"} . "/miningpoolhub";
 mkdirp("$statsdir/spool");
 
 # delegate SIG{CHLD}
